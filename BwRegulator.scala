@@ -50,12 +50,17 @@ class BwRegulator(address: BigInt) (implicit p: Parameters) extends LazyModule
     val domainIds = Reg(Vec(n, UInt(log2Ceil(nDomains).W)))
     val coreAccActive = Wire(Vec(n, Bool()))
     val coreWbActive = Wire(Vec(n, Bool()))
-    val throttleDomain = Wire(Vec(nDomains, Bool()))
+    val throttleDomainBank0 = Wire(Vec(nDomains, Bool())) //throttle for accesses to bank 0
+    val throttleDomainBank1 = Wire(Vec(nDomains, Bool())) //throttle for accesses to bank 1
+
     val throttleDomainWb = Wire(Vec(nDomains, Bool()))
 
     val perfCycleW = 40 // about 8 minutes in target machine time
     val perfPeriodW = 18 // max 100us
-    val perfCntrW = perfPeriodW - 3
+    val perfCntrW = perfPeriodW - 3n the current cycle & are assigned to domain i
+      val coreAccActMasked = (domainIds zip coreAccActive).map { case (d, act) => d === i.U && act }
+      
+      //per bank support
 
     val perfEnable = RegInit(false.B)
     val perfPeriod = Reg(UInt(perfPeriodW.W))
@@ -77,8 +82,13 @@ class BwRegulator(address: BigInt) (implicit p: Parameters) extends LazyModule
     for (i <- 0 until nDomains) {
       // bit vector for cores that are enabled & access mem in the current cycle & are assigned to domain i
       val coreAccActMasked = (domainIds zip coreAccActive).map { case (d, act) => d === i.U && act }
+      
+      //per bank support
+      val coreAccActBank0Masked := coreAccActMasked.reduce(_||_) && coreAccActiveBank0 //access is to bank 0
+      val coreAccActBank1Masked := coreAccActMasked.reduce(_||_) && coreAccActiveBank1 //access is to bank 1
+
       // sbus accepts transaction from only one core in a cycle, so it's ok to reduce-or the active cores bit vector
-      accCntrs(i) := Mux(enBRUGlobal, coreAccActMasked.reduce(_||_) + Mux(periodCntrReset, 0.U, accCntrs(i)), 0.U)
+      accCntrs(i) := Mux(enBRUGlobal, coreAccActiveBank + Mux(periodCntrReset, 0.U, accCntrs(i)), 0.U)
       throttleDomain(i) := accCntrs(i) >= maxAccs(i)
 
       val coreWbActMasked = (domainIds zip coreWbActive).map { case (d, act) => d === i.U && act }
@@ -99,11 +109,19 @@ class BwRegulator(address: BigInt) (implicit p: Parameters) extends LazyModule
       coreAccActive(i) := bwREnables(i) && out.a.fire && (aIsAcquire || aIsInstFetch && countInstFetch)
       coreWbActive(i) := bwREnables(i) && edge_out.done(out.c) && cIsWb
 
+
+      //per bank support
+      val isBankAcc0 = in.a.bits.address(6) === 0.B
+      val isBankAcc1 = in.a.bits.address(6) === 1.B
+
+      coreAccActiveBank0(i) := isBankAcc0
+      coreAccActiveBank1(i) := isBankAcc1
+
       out <> in
       io.nThrottleWb(i) := false.B
 
       when (enBRUGlobal && bwREnables(i)) {
-        when (throttleDomain(domainIds(i))) { //should throttle bank 0, is bank0
+        when (throttleDomain(domainIds(i))) {
           out.a.valid := false.B
           in.a.ready := false.B
         }
