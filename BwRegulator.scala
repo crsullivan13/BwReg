@@ -42,13 +42,16 @@ class BwRegulator(address: BigInt) (implicit p: Parameters) extends LazyModule
     val enWbThrottle = RegInit(false.B)
     val periodCntr = Reg(UInt(wPeriod.W))
     val periodLen = Reg(UInt(wPeriod.W))
-    val accCntrs = Reg(Vec(nDomains, UInt(w.W)))
+    val bank0AccCntrs = Reg(Vec(nDomains, UInt(w.W)))
+    val bank1AccCntrs = Reg(Vec(nDomains, UInt(w.W)))
     val maxAccs = Reg(Vec(nDomains, UInt(w.W)))
     val wbCntrs = Reg(Vec(nDomains, UInt(w.W)))
     val maxWbs = Reg(Vec(nDomains, UInt(w.W)))
     val bwREnables = Reg(Vec(n, Bool()))
     val domainIds = Reg(Vec(n, UInt(log2Ceil(nDomains).W)))
     val coreAccActive = Wire(Vec(n, Bool()))
+    val coreAccBank0 = Wire(Vec(n, Bool()))
+    val coreAccBank1 = Wire(Vec(n, Bool()))
     val coreWbActive = Wire(Vec(n, Bool()))
     val throttleDomainBank0 = Wire(Vec(nDomains, Bool())) //throttle for accesses to bank 0
     val throttleDomainBank1 = Wire(Vec(nDomains, Bool())) //throttle for accesses to bank 1
@@ -57,10 +60,7 @@ class BwRegulator(address: BigInt) (implicit p: Parameters) extends LazyModule
 
     val perfCycleW = 40 // about 8 minutes in target machine time
     val perfPeriodW = 18 // max 100us
-    val perfCntrW = perfPeriodW - 3n the current cycle & are assigned to domain i
-      val coreAccActMasked = (domainIds zip coreAccActive).map { case (d, act) => d === i.U && act }
-      
-      //per bank support
+    val perfCntrW = perfPeriodW - 3
 
     val perfEnable = RegInit(false.B)
     val perfPeriod = Reg(UInt(perfPeriodW.W))
@@ -80,16 +80,15 @@ class BwRegulator(address: BigInt) (implicit p: Parameters) extends LazyModule
 
     // generator loop for domains
     for (i <- 0 until nDomains) {
-      // bit vector for cores that are enabled & access mem in the current cycle & are assigned to domain i
-      val coreAccActMasked = (domainIds zip coreAccActive).map { case (d, act) => d === i.U && act }
+      // bit vector for cores that are enabled & access mem in the current cycle & are assigned to domain i & are in accssessing a given bank
+      val coreAccActBank0Masked = (domainIds zip (coreAccActive zip coreAccBank0)).map { case (d, (act, bank)) => d === i.U && act && bank }
+      val coreAccActBank1Masked = (domainIds zip (coreAccActive zip coreAccBank1)).map { case (d, (act, bank)) => d === i.U && act && bank }
       
-      //per bank support
-      val coreAccActBank0Masked := coreAccActMasked.reduce(_||_) && coreAccActiveBank0 //access is to bank 0
-      val coreAccActBank1Masked := coreAccActMasked.reduce(_||_) && coreAccActiveBank1 //access is to bank 1
-
       // sbus accepts transaction from only one core in a cycle, so it's ok to reduce-or the active cores bit vector
-      accCntrs(i) := Mux(enBRUGlobal, coreAccActiveBank + Mux(periodCntrReset, 0.U, accCntrs(i)), 0.U)
-      throttleDomain(i) := accCntrs(i) >= maxAccs(i)
+      bank0AccCntrs(i) := Mux(enBRUGlobal, coreAccActBank0Masked.reduce(_||_) + Mux(periodCntrReset, 0.U, bank0AccCntrs(i)), 0.U)
+      bank1AccCntrs(i) := Mux(enBRUGlobal, coreAccActBank1Masked.reduce(_||_) + Mux(periodCntrReset, 0.U, bank1AccCntrs(i)), 0.U)
+      throttleDomainBank0(i) := bank0AccCntrs(i) >= maxAccs(i)
+      throttleDomainBank1(i) := bank1AccCntrs(i) >= maxAccs(i)
 
       val coreWbActMasked = (domainIds zip coreWbActive).map { case (d, act) => d === i.U && act }
       wbCntrs(i) := Mux(enBRUGlobal, coreWbActMasked.reduce(_||_) + Mux(periodCntrReset, 0.U, wbCntrs(i)), 0.U)
@@ -109,21 +108,24 @@ class BwRegulator(address: BigInt) (implicit p: Parameters) extends LazyModule
       coreAccActive(i) := bwREnables(i) && out.a.fire && (aIsAcquire || aIsInstFetch && countInstFetch)
       coreWbActive(i) := bwREnables(i) && edge_out.done(out.c) && cIsWb
 
-
       //per bank support
+      //do we access a given bank?
       val isBankAcc0 = in.a.bits.address(6) === 0.B
       val isBankAcc1 = in.a.bits.address(6) === 1.B
 
-      coreAccActiveBank0(i) := isBankAcc0
-      coreAccActiveBank1(i) := isBankAcc1
+      coreAccBank0(i) := isBankAcc0
+      coreAccBank1(i) := isBankAcc1
 
       out <> in
       io.nThrottleWb(i) := false.B
 
       when (enBRUGlobal && bwREnables(i)) {
-        when (throttleDomain(domainIds(i))) {
+        when (throttleDomainBank0(domainIds(i)) && coreAccBank0(i)) {
           out.a.valid := false.B
           in.a.ready := false.B
+        } .elsewhen (throttleDomainBank1(domainIds(i)) && coreAccBank1(i)) {
+          out.a.valid := false.B
+          out.a.ready := false.B
         }
         when (throttleDomainWb(domainIds(i)) && enWbThrottle) {
           io.nThrottleWb(i) := true.B
