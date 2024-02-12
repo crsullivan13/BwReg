@@ -125,7 +125,7 @@ class BwRegulator(address: BigInt) (implicit p: Parameters) extends LazyModule
           in.a.ready := false.B
         } .elsewhen (throttleDomainBank1(domainIds(i)) && coreAccBank1(i)) {
           out.a.valid := false.B
-          out.a.ready := false.B
+          in.a.ready := false.B
         }
         when (throttleDomainWb(domainIds(i)) && enWbThrottle) {
           io.nThrottleWb(i) := true.B
