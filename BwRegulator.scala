@@ -121,9 +121,11 @@ class BwRegulator(address: BigInt) (implicit p: Parameters) extends LazyModule
 
       when (enBRUGlobal && bwREnables(i)) {
         when (throttleDomainBank0(domainIds(i)) && coreAccBank0(i)) {
+          SynthesizePrintf(printf(s"addy0: %d %d %x\n", cycle, i.U, out.a.bits.address))
           out.a.valid := false.B
           in.a.ready := false.B
         } .elsewhen (throttleDomainBank1(domainIds(i)) && coreAccBank1(i)) {
+          SynthesizePrintf(printf(s"addy1: %d %d %x\n", cycle, i.U, out.a.bits.address))
           out.a.valid := false.B
           in.a.ready := false.B
         }
@@ -136,7 +138,7 @@ class BwRegulator(address: BigInt) (implicit p: Parameters) extends LazyModule
       clientNames(i) = edge_in.client.clients(0).name + ", " + edge_in.client.clients(2).name
 
       when (perfPeriodCntrReset && perfEnable) {
-        //SynthesizePrintf(printf(s"%d %d %d %d\n", cycle, i.U, aCounters(i), cCounters(i)))
+        SynthesizePrintf(printf(s"bank: %d %d %d %d\n", cycle, i.U, bank0AccCntrs(i), bank1AccCntrs(i)))
       }
       aCounters(i) := Mux(perfEnable,
         (out.a.fire && (aIsAcquire || aIsInstFetch)) + Mux(perfPeriodCntrReset, 0.U, aCounters(i)), 0.U)
