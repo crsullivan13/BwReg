@@ -21,13 +21,17 @@ class BwRegulator(address: BigInt) (implicit p: Parameters) extends LazyModule
 
   val node = TLAdapterNode()
 
-  lazy val module = new LazyModuleImp(this)
+  lazy val module = new BwRegulatorModule(this)
+}
+
+class BwRegulatorModule(outer: BwRegulator) extends LazyModuleImp(outer)
   {
     // A TLAdapterNode has equal number of input and output edges
-    val n = node.in.length
+    val n = outer.node.in.length
     require(n <= 32)
 
-    val io = IO(new Bundle {
+    val io = IO(new Bundle 
+    {
       val nThrottleWb = Output(Vec(n, Bool()))
     })
 
@@ -88,8 +92,8 @@ class BwRegulator(address: BigInt) (implicit p: Parameters) extends LazyModule
 
     //generator loop for cores
     for (i <- 0 until n) {
-      val (out, edge_out) = node.out(i)
-      val (in, edge_in) = node.in(i)
+      val (out, edge_out) = outer.node.out(i)
+      val (in, edge_in) = outer.node.in(i)
 
       val aIsAcquire = in.a.bits.opcode === TLMessages.AcquireBlock
       val aIsInstFetch = in.a.bits.opcode === TLMessages.Get && in.a.bits.address >= memBase
@@ -161,11 +165,10 @@ class BwRegulator(address: BigInt) (implicit p: Parameters) extends LazyModule
       RegField(perfPeriod.getWidth, perfPeriod,
         RegFieldDesc("perfPeriod", "perfPeriod"))))
 
-    regnode.regmap(enBRUGlobalRegField ++ settingsRegField ++ periodLenRegField ++ maxAccRegFields ++ maxWbRegFields ++
+    outer.regnode.regmap(enBRUGlobalRegField ++ settingsRegField ++ periodLenRegField ++ maxAccRegFields ++ maxWbRegFields ++
       bwREnablesField ++ domainIdFields ++ perfEnField ++ perfPeriodField: _*)
 
     println("Bandwidth regulation (BRU):")
     for (i <- clientNames.indices)
       println(s"  $i => ${clientNames(i)}")
   }
-}
