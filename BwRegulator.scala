@@ -46,6 +46,12 @@ class BwRegulatorModule(outer: BwRegulator) extends LazyModuleImp(outer)
   //val sourceIO = outer.nThrottleWbSourceNode.bundle
   //sourceIO := io.nThrottleWb
 
+  val memBase = p(ExtMem).get.master.base.U
+  val wPeriod = 25 // for max 10ms period, F = 2.13GHz
+  val w = wPeriod - 3 // it can count up to a transaction per 8 cycles when window size is set to max
+  val nDomains = n
+  var clientNames = new Array[String](n)
+
   val enBRUGlobal = RegInit(false.B)
   val countInstFetch = RegInit(true.B)
   val enWbThrottle = RegInit(false.B)
@@ -66,11 +72,6 @@ class BwRegulatorModule(outer: BwRegulator) extends LazyModuleImp(outer)
   val throttleDomainBank1 = Wire(Vec(nDomains, Bool())) //throttle for accesses to bank 1
 
   val throttleDomainWb = Wire(Vec(nDomains, Bool()))
-  val memBase = p(ExtMem).get.master.base.U
-  val wPeriod = 25 // for max 10ms period, F = 2.13GHz
-  val w = wPeriod - 3 // it can count up to a transaction per 8 cycles when window size is set to max
-  val nDomains = n
-  var clientNames = new Array[String](n)
 
   val perfCycleW = 40 // about 8 minutes in target machine time
   val perfPeriodW = 18 // max 100us
