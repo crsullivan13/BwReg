@@ -5,6 +5,7 @@ import chisel3.util._
 import org.chipsalliance.cde.config.{Parameters}
 import freechips.rocketchip.diplomacy._
 import freechips.rocketchip.tilelink._
+import freechips.rocketchip.tile._
 import freechips.rocketchip.regmapper._
 import midas.targetutils.SynthesizePrintf
 import org.chipsalliance.cde.config.{Parameters, Field, Config}
@@ -30,7 +31,7 @@ class BwRegulator(address: BigInt) (implicit p: Parameters) extends LazyModule
 
   val node = TLAdapterNode()
   lazy val module = new BwRegulatorModule(this)
-  //val nThrottleWbSourceNode = BundleBridgeSource[Vec[Bool]]()
+  val ioNode = BundleBridgeSource(() => new BRUIO(32))
 }
 
 class BwRegulatorModule(outer: BwRegulator) extends LazyModuleImp(outer)
@@ -42,9 +43,9 @@ class BwRegulatorModule(outer: BwRegulator) extends LazyModuleImp(outer)
 
   val io = IO(new BRUIO(n))
 
-  //outer.nThrottleWbSourceNode.makeIO
-  //val sourceIO = outer.nThrottleWbSourceNode.bundle
-  //sourceIO := io.nThrottleWb
+  outer.ioNode.makeIO()
+  val sourceIO = outer.ioNode.bundle
+  sourceIO <> io.nThrottleWb
 
   val memBase = p(ExtMem).get.master.base.U
   val wPeriod = 25 // for max 10ms period, F = 2.13GHz
