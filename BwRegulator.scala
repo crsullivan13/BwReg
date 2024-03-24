@@ -93,6 +93,10 @@ class BwRegulator(address: BigInt) (implicit p: Parameters) extends LazyModule
       val coreWbActMasked = (domainIds zip coreWbActive).map { case (d, act) => d === i.U && act }
       wbCntrs(i) := Mux(enBRUGlobal, coreWbActMasked.reduce(_||_) + Mux(periodCntrReset, 0.U, wbCntrs(i)), 0.U)
       throttleDomainWb(i) := wbCntrs(i) >= maxWbs(i)
+
+      when (perfPeriodCntrReset && perfEnable) {
+        SynthesizePrintf(printf(s"domain: %d %d %d %d\n", cycle, i.U, bank0AccCntrs(i), bank1AccCntrs(i)))
+      }
     }
 
     //generator loop for cores
@@ -121,11 +125,9 @@ class BwRegulator(address: BigInt) (implicit p: Parameters) extends LazyModule
 
       when (enBRUGlobal && bwREnables(i)) {
         when (throttleDomainBank0(domainIds(i)) && coreAccBank0(i)) {
-          SynthesizePrintf(printf(s"addy0: %d %d %x\n", cycle, i.U, out.a.bits.address))
           out.a.valid := false.B
           in.a.ready := false.B
         } .elsewhen (throttleDomainBank1(domainIds(i)) && coreAccBank1(i)) {
-          SynthesizePrintf(printf(s"addy1: %d %d %x\n", cycle, i.U, out.a.bits.address))
           out.a.valid := false.B
           in.a.ready := false.B
         }
@@ -134,11 +136,17 @@ class BwRegulator(address: BigInt) (implicit p: Parameters) extends LazyModule
         }
       }
 
-      // DCache and ICache
-      clientNames(i) = edge_in.client.clients(0).name + ", " + edge_in.client.clients(2).name
+      // Hacky solution to handle different client types, better way to do this?
+      if ( edge_in.client.clients.size > 2 ) {
+        // core dcache and icache case
+        clientNames(i) = edge_in.client.clients(0).name + ", " + edge_in.client.clients(2).name
+      } else {
+        // RoCC case
+        clientNames(i) = edge_in.client.clients(0).name
+      }
 
       when (perfPeriodCntrReset && perfEnable) {
-        SynthesizePrintf(printf(s"bank: %d %d %d %d\n", cycle, i.U, bank0AccCntrs(i), bank1AccCntrs(i)))
+        SynthesizePrintf(printf(s"core: %d %d %d %d %x\n", cycle, i.U, aCounters(i), cCounters(i), out.a.bits.address))
       }
       aCounters(i) := Mux(perfEnable,
         (out.a.fire && (aIsAcquire || aIsInstFetch)) + Mux(perfPeriodCntrReset, 0.U, aCounters(i)), 0.U)
