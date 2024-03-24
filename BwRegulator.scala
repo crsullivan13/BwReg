@@ -9,19 +9,36 @@ import freechips.rocketchip.tilelink._
 import freechips.rocketchip.regmapper._
 import midas.targetutils.SynthesizePrintf
 //import midas.targetutils._
+import freechips.rocketchip.subsystem.HasTiles
+
+case class BRUParams(
+  address: BigInt,
+)
+
+case object BRUKey extends Field[Option[BwRegParams]](None)
+
+class BwRUIO(val n: Int) extends Bundle (
+  val nThrottleWb = Output(Vec(n, Bool()))
+)
+
+trait HasBRUIO extends BaseModule (
+  val n: Int
+  val io = IO(new BRUIO(n))
+)
 
 class BwRegulator(address: BigInt) (implicit p: Parameters) extends LazyModule
+  with HasBRUIO
 {
   val device = new SimpleDevice("bru",Seq("ku-csl,bru"))
 
   val regnode = new TLRegisterNode(
-    address = Seq(AddressSet(address, 0x7f)),
+    address = Seq(AddressSet(p.address, 0x7f)),
     device = device,
     beatBytes = 8)
 
   val node = TLAdapterNode()
-
   lazy val module = new BwRegulatorModule(this)
+  val nThrottleWbSourceNode = BundleBridgeSource[Vec[Bool]]()
 }
 
 class BwRegulatorModule(outer: BwRegulator) extends LazyModuleImp(outer)
@@ -29,11 +46,10 @@ class BwRegulatorModule(outer: BwRegulator) extends LazyModuleImp(outer)
     // A TLAdapterNode has equal number of input and output edges
     val n = outer.node.in.length
     require(n <= 32)
-
-    val io = IO(new Bundle 
-    {
-      val nThrottleWb = Output(Vec(n, Bool()))
-    })
+    
+    outer.nThrottleWbSourceNode.makeIO
+    val sourceIO = outer.nThrottleWbSourceNode.bundle
+    sourceIO := io.nThrottleWb
 
     val memBase = p(ExtMem).get.master.base.U
     val wPeriod = 25 // for max 10ms period, F = 2.13GHz
@@ -172,3 +188,23 @@ class BwRegulatorModule(outer: BwRegulator) extends LazyModuleImp(outer)
     for (i <- clientNames.indices)
       println(s"  $i => ${clientNames(i)}")
   }
+
+trait CanHavePeripheryBRU { this: BaseSubsystem =>
+  private val portName = "bru"
+
+  val BwRegulator = p(BRUKey) match {
+    case Some(params) =>
+      val BwRegulator = LazyModule(new BwRegulator(params.address)(p))
+
+      pbus.coupleTo(portName) { 
+        BwRegulator.regnode := 
+        TLFragmenter(pbus.beatBytes, pbus.blockBytes) := _ }
+
+      Some(BwRegulator)
+  }
+    case None => None
+}
+
+class WithBRU(address: BigInt = 0x20000000L) extends Config((site, here, up) => {
+  case BRUKey => Some(BRUParams(address = address))
+})
