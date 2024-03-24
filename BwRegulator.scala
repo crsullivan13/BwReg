@@ -10,29 +10,30 @@ import freechips.rocketchip.regmapper._
 import midas.targetutils.SynthesizePrintf
 //import midas.targetutils._
 import freechips.rocketchip.subsystem.HasTiles
+import org.chipsalliance.cde.config.{Parameters, Field, Config}
 
-case class BRUParams(
+case class BRUParams (
   address: BigInt,
 )
 
-case object BRUKey extends Field[Option[BwRegParams]](None)
+case object BRUKey extends Field[Option[BRUParams]](None)
 
-class BwRUIO(val n: Int) extends Bundle (
+class BRUIO(val n: Int) extends Bundle {
   val nThrottleWb = Output(Vec(n, Bool()))
-)
+}
 
-trait HasBRUIO extends BaseModule (
+trait HasBRUIO {
   val n: Int
   val io = IO(new BRUIO(n))
-)
+}
 
 class BwRegulator(address: BigInt) (implicit p: Parameters) extends LazyModule
-  with HasBRUIO
 {
+  def params: BRUParams
   val device = new SimpleDevice("bru",Seq("ku-csl,bru"))
 
   val regnode = new TLRegisterNode(
-    address = Seq(AddressSet(p.address, 0x7f)),
+    address = Seq(AddressSet(params.address, 0x7f)),
     device = device,
     beatBytes = 8)
 
@@ -42,11 +43,12 @@ class BwRegulator(address: BigInt) (implicit p: Parameters) extends LazyModule
 }
 
 class BwRegulatorModule(outer: BwRegulator) extends LazyModuleImp(outer)
+  with HasBRUIO
   {
     // A TLAdapterNode has equal number of input and output edges
     val n = outer.node.in.length
     require(n <= 32)
-    
+
     outer.nThrottleWbSourceNode.makeIO
     val sourceIO = outer.nThrottleWbSourceNode.bundle
     sourceIO := io.nThrottleWb
@@ -193,7 +195,7 @@ trait CanHavePeripheryBRU { this: BaseSubsystem =>
   private val portName = "bru"
 
   val BwRegulator = p(BRUKey) match {
-    case Some(params) =>
+    case Some(params) => {
       val BwRegulator = LazyModule(new BwRegulator(params.address)(p))
 
       pbus.coupleTo(portName) { 
@@ -201,8 +203,9 @@ trait CanHavePeripheryBRU { this: BaseSubsystem =>
         TLFragmenter(pbus.beatBytes, pbus.blockBytes) := _ }
 
       Some(BwRegulator)
-  }
+    }
     case None => None
+  }
 }
 
 class WithBRU(address: BigInt = 0x20000000L) extends Config((site, here, up) => {
