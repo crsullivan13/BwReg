@@ -41,11 +41,8 @@ class BwRegulatorModule(outer: BwRegulator) extends LazyModuleImp(outer)
   println(s"Number of edges into BRU: $n")
   require(n <= 32)
 
-  val io = IO(new BRUIO(n))
-
   outer.ioNode.makeIO()
-  val sourceIO = outer.ioNode.bundle
-  sourceIO <> io.nThrottleWb
+  val io = outer.ioNode.bundle
 
   val memBase = p(ExtMem).get.master.base.U
   val wPeriod = 25 // for max 10ms period, F = 2.13GHz
@@ -191,21 +188,27 @@ class BwRegulatorModule(outer: BwRegulator) extends LazyModuleImp(outer)
     println(s"  $i => ${clientNames(i)}")
 }
 
-trait CanHavePeripheryBRU { this: BaseSubsystem =>
+trait CanHavePeripheryBRU {
+  implicit val p: Parameters
   private val portName = "bru"
 
   val BwRegulator = p(BRUKey) match {
     case Some(params) => {
       val BwRegulator = LazyModule(new BwRegulator(params.address)(p))
 
-      pbus.coupleTo(portName) { 
-        BwRegulator.regnode := 
-        TLFragmenter(pbus.beatBytes, pbus.blockBytes) := _ }
+      // pbus.coupleTo(portName) { 
+      //   BwRegulator.regnode := 
+      //   TLFragmenter(pbus.beatBytes, pbus.blockBytes) := _ }
 
       Some(BwRegulator)
     }
     case None => None
   }
+  def getBwRegulatorIONode: Option[BundleBridgeSource[BRUIO]] = BwRegulator.map(_.ioNode)
+}
+
+trait HasBRUNode extends CanHavePeripheryBRU {
+  val bruIONodeOption: Option[BundleBridgeSource[BRUIO]] = getBwRegulatorIONode
 }
 
 class WithBRU(address: BigInt = 0x20000000L) extends Config((site, here, up) => {
