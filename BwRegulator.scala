@@ -2,7 +2,6 @@ package freechips.rocketchip.subsystem
 
 import chisel3._
 import chisel3.util._
-import org.chipsalliance.cde.config.{Parameters}
 import freechips.rocketchip.diplomacy._
 import freechips.rocketchip.tilelink._
 import freechips.rocketchip.regmapper._
@@ -12,6 +11,7 @@ import org.chipsalliance.cde.config.{Parameters, Field, Config}
 case class BRUParams (
   address: BigInt,
   nDomains: Int,
+  nBanks: Int,
 )
 
 case object BRUKey extends Field[Option[BRUParams]](None)
@@ -30,10 +30,10 @@ class BwRegulator(params: BRUParams) (implicit p: Parameters) extends LazyModule
     beatBytes = 8)
 
   val node = TLAdapterNode()
-  lazy val module = new BwRegulatorModule(this, params.nDomains)
+  lazy val module = new BwRegulatorModule(this, params.nDomains, params.nBanks)
 }
 
-class BwRegulatorModule(outer: BwRegulator, nDomains: Int) extends LazyModuleImp(outer)
+class BwRegulatorModule(outer: BwRegulator, nDomains: Int, nBanks: Int) extends LazyModuleImp(outer)
 {
   // A TLAdapterNode has equal number of input and output edges
   val n = outer.node.in.length
@@ -43,9 +43,11 @@ class BwRegulatorModule(outer: BwRegulator, nDomains: Int) extends LazyModuleImp
   val io = IO(new BRUIO(n))
 
   val memBase = p(ExtMem).get.master.base.U
-  val wPeriod = 25 // for max 10ms period, F = 2.13GHz
+  val wPeriod = 25 // for max 33.5ms period, F = 1GHz
   val w = wPeriod - 3 // it can count up to a transaction per 8 cycles when window size is set to max
   var clientNames = new Array[String](n)
+
+  val numBankBits = log2Ceil(nBanks)
 
   val enBRUGlobal = RegInit(false.B)
   val countInstFetch = RegInit(true.B)
@@ -53,11 +55,9 @@ class BwRegulatorModule(outer: BwRegulator, nDomains: Int) extends LazyModuleImp
   val enWbThrottle = RegInit(false.B)
   val periodCntr = Reg(UInt(wPeriod.W))
   val periodLen = Reg(UInt(wPeriod.W))
-  val bank0AccCntrs = Reg(Vec(nDomains, UInt(w.W)))
-  val bank1AccCntrs = Reg(Vec(nDomains, UInt(w.W)))
+  val bankReadCntrs = Seq.fill(nDomains)(RegInit(VecInit(Seq.fill(nBanks)(0.U(w.W)))))
   val maxAccs = Reg(Vec(nDomains, UInt(w.W)))
-  val bank0PutCntrs = Reg(Vec(nDomains, UInt(w.W)))
-  val bank1PutCntrs = Reg(Vec(nDomains, UInt(w.W)))
+  val bankWriteCntrs = Seq.fill(nDomains)(RegInit(VecInit(Seq.fill(nBanks)(0.U(w.W)))))
   val maxPuts = Reg(Vec(nDomains, UInt(w.W)))
   val wbCntrs = Reg(Vec(nDomains, UInt(w.W)))
   val maxWbs = Reg(Vec(nDomains, UInt(w.W)))
@@ -66,12 +66,9 @@ class BwRegulatorModule(outer: BwRegulator, nDomains: Int) extends LazyModuleImp
   val coreAcquireActive = Wire(Vec(n, Bool()))
   val corePutActive = Wire(Vec(n, Bool()))
   val coreWbActive = Wire(Vec(n, Bool()))
-  val isAccessBank0 = Wire(Vec(n, Bool()))
-  val isAccessBank1 = Wire(Vec(n, Bool()))
-  val throttleReadDomainBank0 = Wire(Vec(nDomains, Bool())) //throttle for accesses to bank 0
-  val throttleReadDomainBank1 = Wire(Vec(nDomains, Bool())) //throttle for accesses to bank 1
-  val throttleWriteDomainBank0 = Wire(Vec(nDomains, Bool())) //throttle for accesses to bank 0
-  val throttleWriteDomainBank1 = Wire(Vec(nDomains, Bool())) //throttle for accesses to bank 1
+  val doesAccessBank = Seq.fill(n)(Wire(Vec(nBanks, Bool())))
+  val throttleReadDomainBanks = VecInit(Seq.fill(nDomains)(Wire(Vec(nBanks, Bool()))))
+  val throttleWriteDomainBanks = VecInit(Seq.fill(nDomains)(Wire(Vec(nBanks, Bool()))))
 
   val throttleDomainWb = Wire(Vec(nDomains, Bool()))
 
@@ -97,29 +94,22 @@ class BwRegulatorModule(outer: BwRegulator, nDomains: Int) extends LazyModuleImp
 
   // generator loop for domains
   for (i <- 0 until nDomains) {
-    // bit vector for cores that are enabled & access mem in the current cycle & are assigned to domain i & are in accssessing a given bank
 
-    //reads
-    val coreAcquireActBank0Masked = (domainIds zip (coreAcquireActive zip isAccessBank0)).map { case (d, (act, bank)) => d === i.U && act && bank }
-    val coreAcquireActBank1Masked = (domainIds zip (coreAcquireActive zip isAccessBank1)).map { case (d, (act, bank)) => d === i.U && act && bank }
+    for (j <- 0 until nBanks) {
+      // bit vectors for clients that are enabled & access mem in the current cycle & are assigned to domain i & are in accssessing bank j
+      val clientAcquireActBankMasked = (domainIds zip (coreAcquireActive zip doesAccessBank)).map { case (d, (act, bank)) => d === i.U && act && bank(j) }
+      val clientPutActBankMasked = (domainIds zip (corePutActive zip doesAccessBank)).map { case (d, (act, bank)) => d === i.U && act && bank(j) }
 
-    //writes from Mempress, TODO: does this apply to other RoCC devices?
-    val corePutActBank0Masked = (domainIds zip (corePutActive zip isAccessBank0)).map { case (d, (act, bank)) => d === i.U && act && bank }
-    val corePutActBank1Masked = (domainIds zip (corePutActive zip isAccessBank1)).map { case (d, (act, bank)) => d === i.U && act && bank }
-    
-    // sbus accepts transaction from only one core in a cycle, so it's ok to reduce-or the active cores bit vector
-    bank0AccCntrs(i) := Mux(enBRUGlobal, coreAcquireActBank0Masked.reduce(_||_) + Mux(periodCntrReset, 0.U, bank0AccCntrs(i)), 0.U)
-    bank1AccCntrs(i) := Mux(enBRUGlobal, coreAcquireActBank1Masked.reduce(_||_) + Mux(periodCntrReset, 0.U, bank1AccCntrs(i)), 0.U)
+      // should be able to reduce or the masks as sytem bus only allows one request per cycle
+      bankReadCntrs(i)(j) := Mux(enBRUGlobal, clientAcquireActBankMasked.reduce(_||_) + Mux(periodCntrReset, 0.U, bankReadCntrs(i)(j)), 0.U)
+      bankWriteCntrs(i)(j) := Mux(enBRUGlobal, clientPutActBankMasked.reduce(_||_) + Mux(periodCntrReset, 0.U, bankWriteCntrs(i)(j)), 0.U)
 
-    bank0PutCntrs(i) := Mux(enBRUGlobal, corePutActBank0Masked.reduce(_||_) + Mux(periodCntrReset, 0.U, bank0PutCntrs(i)), 0.U)
-    bank1PutCntrs(i) := Mux(enBRUGlobal, corePutActBank1Masked.reduce(_||_) + Mux(periodCntrReset, 0.U, bank1PutCntrs(i)), 0.U)
+      throttleReadDomainBanks(i)(j) := bankReadCntrs(i)(j) >= maxAccs(i)
+      throttleWriteDomainBanks(i)(j) := bankWriteCntrs(i)(j) >= maxPuts(i)
+    }
 
-    throttleReadDomainBank0(i) := bank0AccCntrs(i) >= maxAccs(i)
-    throttleReadDomainBank1(i) := bank1AccCntrs(i) >= maxAccs(i)
-
-    throttleWriteDomainBank0(i) := bank0PutCntrs(i) >= maxPuts(i)
-    throttleWriteDomainBank1(i) := bank1PutCntrs(i) >= maxPuts(i)
-
+    // TODO: get wb throttling to work in Boom
+    // leaving this here to legacy, doesn't currently do anything
     val coreWbActMasked = (domainIds zip coreWbActive).map { case (d, act) => d === i.U && act }
     wbCntrs(i) := Mux(enBRUGlobal, coreWbActMasked.reduce(_||_) + Mux(periodCntrReset, 0.U, wbCntrs(i)), 0.U)
     throttleDomainWb(i) := wbCntrs(i) >= maxWbs(i)
@@ -136,6 +126,7 @@ class BwRegulatorModule(outer: BwRegulator, nDomains: Int) extends LazyModuleImp
 
     val aIsAcquire = in.a.bits.opcode === TLMessages.AcquireBlock
     val aIsInstFetch = in.a.bits.opcode === TLMessages.Get && in.a.bits.address >= memBase
+    // The only Put clients seem to bo RoCC (Mempress) in our setup, writes
     val aIsPut = ( (in.a.bits.opcode === TLMessages.PutFullData) || (in.a.bits.opcode === TLMessages.PutPartialData) ) && in.a.bits.address >= memBase
     // ReleaseData or ProbeAckData cause a PutFull in Broadcast Hub
     val cIsWb = in.c.bits.opcode === TLMessages.ReleaseData || in.c.bits.opcode === TLMessages.ProbeAckData
@@ -147,25 +138,28 @@ class BwRegulatorModule(outer: BwRegulator, nDomains: Int) extends LazyModuleImp
     coreWbActive(i) := bwREnables(i) && edge_out.done(out.c) && cIsWb
 
     //per bank support
-    //do we access a given bank?
-    val isBank0 = in.a.bits.address(6) === 0.B
-    val isBank1 = in.a.bits.address(6) === 1.B
-
-    isAccessBank0(i) := isBank0
-    isAccessBank1(i) := isBank1
+    //do we access bank j
+    val bankBits = Wire(UInt())
+    for (j <- 0 until nBanks) {
+      bankBits := in.a.bits.address(6+numBankBits-1,6)
+      doesAccessBank(i)(j) := bankBits === j.U
+    }
 
     out <> in
     io.nThrottleWb(i) := false.B
 
     when (enBRUGlobal && bwREnables(i)) {
-      when ( ( throttleReadDomainBank0(domainIds(i)) && isAccessBank0(i) || throttleReadDomainBank1(domainIds(i)) && isAccessBank1(i) ) && aIsRead ) {
-        out.a.valid := false.B
-        in.a.ready := false.B
+      for (j <- 0 until nBanks ) {
+        when ( ( throttleReadDomainBanks(domainIds(i))(j) && doesAccessBank(i)(j) ) && aIsRead ) {
+          out.a.valid := false.B
+          in.a.ready := false.B
+        }
+        when ( ( throttleWriteDomainBanks(domainIds(i))(j) && doesAccessBank(i)(j) ) && aIsPut ) {
+          out.a.valid := false.B
+          in.a.ready := false.B
+        }
       }
-      when ( ( throttleWriteDomainBank0(domainIds(i)) && isAccessBank0(i) || throttleWriteDomainBank1(domainIds(i)) && isAccessBank1(i) ) && aIsPut) {
-        out.a.valid := false.B
-        in.a.ready := false.B
-      }
+
       when (throttleDomainWb(domainIds(i)) && enWbThrottle) {
         io.nThrottleWb(i) := true.B
       }
@@ -257,6 +251,6 @@ trait CanHavePeripheryBRU { this: BaseSubsystem =>
   }
 }
 
-class WithBRU(address: BigInt = 0x20000000L, nDomainsArg: Int = 4) extends Config((_, _, _) => {
-  case BRUKey => Some(BRUParams(address = address, nDomains = nDomainsArg))
+class WithBRU(address: BigInt = 0x20000000L, nDomains: Int = 4, nBanks: Int = 2) extends Config((_, _, _) => {
+  case BRUKey => Some(BRUParams(address = address, nDomains = nDomains, nBanks = nBanks))
 })
