@@ -67,8 +67,8 @@ class BwRegulatorModule(outer: BwRegulator, nDomains: Int, nBanks: Int) extends 
   val corePutActive = Wire(Vec(n, Bool()))
   val coreWbActive = Wire(Vec(n, Bool()))
   val doesAccessBank = Seq.fill(n)(Wire(Vec(nBanks, Bool())))
-  val throttleReadDomainBanks = VecInit(Seq.fill(nDomains)(Wire(Vec(nBanks, Bool()))))
-  val throttleWriteDomainBanks = VecInit(Seq.fill(nDomains)(Wire(Vec(nBanks, Bool()))))
+  val throttleReadDomainBanks = VecInit(Seq.fill(nDomains)(VecInit(Seq.fill(nBanks)(WireInit(Bool(), false.B)))))
+  val throttleWriteDomainBanks = VecInit(Seq.fill(nDomains)(VecInit(Seq.fill(nBanks)(WireInit(Bool(), false.B)))))
 
   val throttleDomainWb = Wire(Vec(nDomains, Bool()))
 
@@ -241,9 +241,9 @@ trait CanHavePeripheryBRU { this: BaseSubsystem =>
     case Some(params) => {
       val BwRegulator = LazyModule(new BwRegulator(params)(p))
 
-      pbus.coupleTo(portName) { 
-        BwRegulator.regnode := 
-        TLFragmenter(pbus.beatBytes, pbus.blockBytes) := _ }
+      // pbus.coupleTo(portName) { 
+      //   BwRegulator.regnode := 
+      //   TLFragmenter(pbus.beatBytes, pbus.blockBytes) := _ }
 
       Some(BwRegulator)
     }
