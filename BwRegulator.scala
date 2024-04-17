@@ -241,9 +241,9 @@ trait CanHavePeripheryBRU { this: BaseSubsystem =>
     case Some(params) => {
       val BwRegulator = LazyModule(new BwRegulator(params)(p))
 
-      // pbus.coupleTo(portName) { 
-      //   BwRegulator.regnode := 
-      //   TLFragmenter(pbus.beatBytes, pbus.blockBytes) := _ }
+      pbus.coupleTo(portName) { 
+        BwRegulator.regnode := 
+        TLFragmenter(pbus.beatBytes, pbus.blockBytes) := _ }
 
       Some(BwRegulator)
     }
