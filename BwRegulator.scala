@@ -73,7 +73,7 @@ class BwRegulatorModule(outer: BwRegulator, nDomains: Int, nBanks: Int) extends 
   val throttleDomainWb = Wire(Vec(nDomains, Bool()))
 
   val perfCycleW = 40 // about 8 minutes in target machine time
-  val perfPeriodW = 18 // max 100us
+  val perfPeriodW = 30 // max 100us
   val perfCntrW = perfPeriodW - 3
 
   val perfEnable = RegInit(false.B)
@@ -81,7 +81,7 @@ class BwRegulatorModule(outer: BwRegulator, nDomains: Int, nBanks: Int) extends 
   val perfPeriodCntr = Reg(UInt(perfPeriodW.W))
   // It is not required to reset these counters but we keep it for now as it helps to close timing
   //  more easily in PnR
-  val aCounters = RegInit(VecInit(Seq.fill(n)(0.U(perfCntrW.W))))
+  val aCounters = Seq.fill(n)(RegInit(VecInit(Seq.fill(nBanks)(0.U(32.W)))))
   val cCounters = RegInit(VecInit(Seq.fill(n)(0.U(perfCntrW.W))))
   val cycle = RegInit(0.U(perfCycleW.W))
 
@@ -143,6 +143,8 @@ class BwRegulatorModule(outer: BwRegulator, nDomains: Int, nBanks: Int) extends 
     for (j <- 0 until nBanks) {
       bankBits := in.a.bits.address(6+numBankBits-1,6)
       doesAccessBank(i)(j) := bankBits === j.U
+      aCounters(i)(j) := Mux(perfEnable, 
+                        ((out.a.fire) && (aIsAcquire || aIsInstFetch || aIsPut) && doesAccessBank(i)(j)) + Mux(perfPeriodCntrReset, 0.U, aCounters(i)(j)), 0.U)
     }
 
     out <> in
@@ -175,10 +177,8 @@ class BwRegulatorModule(outer: BwRegulator, nDomains: Int, nBanks: Int) extends 
     }
 
     when (perfPeriodCntrReset && perfEnable) {
-      SynthesizePrintf(printf(s"core: %d %d %d %d %x\n", cycle, i.U, aCounters(i), cCounters(i), out.a.bits.address))
+      //SynthesizePrintf(printf(s"core: %d %d %d %d %x\n", cycle, i.U, cCounters(i), out.a.bits.address))
     }
-    aCounters(i) := Mux(perfEnable,
-      (out.a.fire && (aIsAcquire || aIsInstFetch || aIsPut)) + Mux(perfPeriodCntrReset, 0.U, aCounters(i)), 0.U)
     cCounters(i) := Mux(perfEnable,
       (edge_out.done(out.c) && cIsWb) + Mux(perfPeriodCntrReset, 0.U, cCounters(i)), 0.U)
   }
@@ -225,6 +225,8 @@ class BwRegulatorModule(outer: BwRegulator, nDomains: Int, nBanks: Int) extends 
   val perfPeriodField = Seq(4*(7 + 3*nDomains + n) -> Seq(
     RegField(perfPeriod.getWidth, perfPeriod,
       RegFieldDesc("perfPeriod", "perfPeriod"))))
+
+  //val bankCountersField = 
 
   outer.regnode.regmap(enBRUGlobalRegField ++ settingsRegField ++ periodLenRegField ++ maxAccRegFields ++ maxPutRegFields ++ maxWbRegFields ++
     bwREnablesField ++ domainIdFields ++ perfEnField ++ perfPeriodField: _*)
