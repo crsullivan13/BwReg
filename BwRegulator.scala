@@ -81,8 +81,8 @@ class BwRegulatorModule(outer: BwRegulator, nDomains: Int, nBanks: Int) extends 
   val perfPeriodCntr = Reg(UInt(perfPeriodW.W))
   // It is not required to reset these counters but we keep it for now as it helps to close timing
   //  more easily in PnR
-  val aCounters = Seq.fill(n)(RegInit(VecInit(Seq.fill(nBanks)(0.U(32.W)))))
-  val cCounters = Seq.fill(n)(RegInit(VecInit(Seq.fill(nBanks)(0.U(32.W)))))
+  val aCounters = Seq.fill(n)(RegInit(VecInit(Seq.fill(nBanks)(0.U(64.W)))))
+  val cCounters = Seq.fill(n)(RegInit(VecInit(Seq.fill(nBanks)(0.U(64.W)))))
   val cycle = RegInit(0.U(perfCycleW.W))
 
   cycle := cycle + 1.U
@@ -140,9 +140,9 @@ class BwRegulatorModule(outer: BwRegulator, nDomains: Int, nBanks: Int) extends 
       bankBits := in.a.bits.address(6+numBankBits-1,6)
       doesAccessBank(i)(j) := bankBits === j.U
       aCounters(i)(j) := Mux(perfEnable, 
-                        ((out.a.fire) && (aIsRead || aIsPut) && doesAccessBank(i)(j)) + Mux(perfPeriodCntrReset, 0.U, aCounters(i)(j)), 0.U)
+                        ((out.a.fire) && (aIsRead || aIsPut) && doesAccessBank(i)(j)) + aCounters(i)(j), 0.U)
       cCounters(i)(j) := Mux(perfEnable,
-                        ((edge_out.done(out.c) && cIsWb) && doesAccessBank(i)(j)) + Mux(perfPeriodCntrReset, 0.U, cCounters(i)(j)), 0.U)
+                        ((edge_out.done(out.c) && cIsWb) && doesAccessBank(i)(j)) + cCounters(i)(j), 0.U)
     }
 
     out <> in
@@ -173,17 +173,13 @@ class BwRegulatorModule(outer: BwRegulator, nDomains: Int, nBanks: Int) extends 
       // RoCC case
       clientNames(i) = edge_in.client.clients(0).name
     }
-
-    when (perfPeriodCntrReset && perfEnable) {
-      //SynthesizePrintf(printf(s"core: %d %d %d %d %x\n", cycle, i.U, cCounters(i), out.a.bits.address))
-    }
   }
 
   val enBRUGlobalRegField = Seq(0 -> Seq(
     RegField(enBRUGlobal.getWidth, enBRUGlobal,
       RegFieldDesc("enBRUGlobal", "Enable BRU Global"))))
 
-  val settingsRegField = Seq(4*1 -> Seq(
+  val settingsRegField = Seq(8 -> Seq(
     RegField(countInstFetch.getWidth, countInstFetch,
       RegFieldDesc("countInstFetch", "Count instruction fetch")),
     RegField(enWbThrottle.getWidth, enWbThrottle,
@@ -191,41 +187,41 @@ class BwRegulatorModule(outer: BwRegulator, nDomains: Int, nBanks: Int) extends 
     RegField(countPuts.getWidth, enWbThrottle,
       RegFieldDesc("countPuts", "Count putFull/putPartial"))))
 
-  val periodLenRegField = Seq(4*2 -> Seq(
+  val periodLenRegField = Seq(16 -> Seq(
     RegField(periodLen.getWidth, periodLen,
       RegFieldDesc("periodLen", "Period length"))))
 
   val maxAccRegFields = maxAccs.zipWithIndex.map { case (reg, i) =>
-    4*(3 + i) -> Seq(RegField(reg.getWidth, reg,
+    (24 + i * 4) -> Seq(RegField(reg.getWidth, reg,
       RegFieldDesc(s"maxAcc$i", s"Maximum access for domain $i"))) }
 
   val maxPutRegFields = maxPuts.zipWithIndex.map { case (reg, i) =>
-    4*(3 + nDomains + i) -> Seq(RegField(reg.getWidth, reg,
+    (24 + 8 * (nDomains + i) ) -> Seq(RegField(reg.getWidth, reg,
       RegFieldDesc(s"maxPut$i", s"Maximum puts for domain $i"))) }
 
   val maxWbRegFields = maxWbs.zipWithIndex.map { case (reg, i) =>
-    4*(3 + 2*nDomains + i) -> Seq(RegField(reg.getWidth, reg,
+    (24 + 2 * 8 * nDomains + i * 8) -> Seq(RegField(reg.getWidth, reg,
       RegFieldDesc(s"maxWb$i", s"Maximum writeback for domain $i"))) }
 
-  val bwREnablesField = Seq(4*(3 + 3*nDomains) -> bwREnables.zipWithIndex.map { case (bit, i) =>
+  val bwREnablesField = Seq((24 + 3 * 8 * nDomains) -> bwREnables.zipWithIndex.map { case (bit, i) =>
     RegField(bit.getWidth, bit, RegFieldDesc("bwREnables", s"Enable bandwidth regulation for ${clientNames(i)}")) })
 
   val domainIdFields = domainIds.zipWithIndex.map { case (reg, i) =>
-    4*(6 + 3*nDomains + i) -> Seq(RegField(reg.getWidth, reg,
+    (48 + 3 * 8 * nDomains + i * 8) -> Seq(RegField(reg.getWidth, reg,
       RegFieldDesc(s"domainId$i", s"Domain ID for ${clientNames(i)}"))) }
 
-  val perfEnField = Seq(4*(6 + 3*nDomains + n) -> Seq(
+  val perfEnField = Seq((48 + 3 * 8 * nDomains + n * 8) -> Seq(
     RegField(perfEnable.getWidth, perfEnable,
       RegFieldDesc("perfEnable", "perfEnable"))))
 
-  val perfPeriodField = Seq(4*(7 + 3*nDomains + n) -> Seq(
+  val perfPeriodField = Seq((56 + 3 * 8 * nDomains + n * 8) -> Seq(
     RegField(perfPeriod.getWidth, perfPeriod,
       RegFieldDesc("perfPeriod", "perfPeriod"))))
 
   //these addresses are bad, can we make them more readable?
   val bankReadCountersField = aCounters.zipWithIndex.flatMap { case (banks, i) =>
     banks.zipWithIndex.map { case (bank, j) =>
-      val addr = 4*(8 + 3 * nDomains + n + i * nBanks + j)
+      val addr = 8 * (8 + 3 * nDomains + n + i * nBanks + j)
       addr -> Seq(
         RegField(bank.getWidth, bank,
           RegFieldDesc(s"bankCountR${i * nBanks + j}", s"Bank Read counter"))
@@ -235,7 +231,7 @@ class BwRegulatorModule(outer: BwRegulator, nDomains: Int, nBanks: Int) extends 
 
   val bankWriteCountersField = cCounters.zipWithIndex.flatMap { case (banks, i) =>
     banks.zipWithIndex.map { case (bank, j) =>
-      val addr = 4*(8 + 3 * nDomains + n + n*nBanks + i * nBanks + j)
+      val addr = 8 * (8 + 3 * nDomains + n + n * nBanks + i * nBanks + j)
       addr -> Seq(
         RegField(bank.getWidth, bank,
           RegFieldDesc(s"bankCountW${i * nBanks + j}", s"Bank Write counter"))
