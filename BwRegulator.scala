@@ -156,48 +156,48 @@ class BwRegulatorModule(outer: BwRegulator, nDomains: Int) extends LazyModuleImp
       (edge_out.done(out.c) && cIsWb) + Mux(perfPeriodCntrReset, 0.U, cCounters(i)), 0.U)
   }
 
-  val enBRUGlobalRegField = Seq(0 -> Seq(
-    RegField(enBRUGlobal.getWidth, enBRUGlobal,
-      RegFieldDesc("enBRUGlobal", "Enable BRU Global"))))
+val enBRUGlobalRegField = Seq(0 -> Seq(
+  RegField(enBRUGlobal.getWidth, enBRUGlobal,
+    RegFieldDesc("enBRUGlobal", "Enable BRU Global"))))
 
-  val settingsRegField = Seq(4*1 -> Seq(
-    RegField(countInstFetch.getWidth, countInstFetch,
-      RegFieldDesc("countInstFetch", "Count instruction fetch")),
-    RegField(enWbThrottle.getWidth, enWbThrottle,
-      RegFieldDesc("enWbThrottle", "Enable writeback throttling")),
-    RegField(countPuts.getWidth, countPuts,
-      RegFieldDesc("countPuts", "Count putFull/putPartial"))))
+val settingsRegField = Seq(8 -> Seq(
+  RegField(countInstFetch.getWidth, countInstFetch,
+    RegFieldDesc("countInstFetch", "Count instruction fetch")),
+  RegField(enWbThrottle.getWidth, enWbThrottle,
+    RegFieldDesc("enWbThrottle", "Enable writeback throttling")),
+  RegField(countPuts.getWidth, countPuts,
+    RegFieldDesc("countPuts", "Count putFull/putPartial"))))
 
-  val periodLenRegField = Seq(4*2 -> Seq(
-    RegField(periodLen.getWidth, periodLen,
-      RegFieldDesc("periodLen", "Period length"))))
+val periodLenRegField = Seq(16 -> Seq(
+  RegField(periodLen.getWidth, periodLen,
+    RegFieldDesc("periodLen", "Period length"))))
 
-  val maxAccRegFields = maxAccs.zipWithIndex.map { case (reg, i) =>
-    4*(3 + i) -> Seq(RegField(reg.getWidth, reg,
-      RegFieldDesc(s"maxAcc$i", s"Maximum access for domain $i"))) }
+val maxAccRegFields = maxAccs.zipWithIndex.map { case (reg, i) =>
+  (24 + i * 8) -> Seq(RegField(reg.getWidth, reg,
+    RegFieldDesc(s"maxAcc$i", s"Maximum access for domain $i"))) }
 
-  val maxPutRegFields = maxPuts.zipWithIndex.map { case (reg, i) =>
-    4*(3 + nDomains + i) -> Seq(RegField(reg.getWidth, reg,
-      RegFieldDesc(s"maxPut$i", s"Maximum puts for domain $i"))) }
+val maxPutRegFields = maxPuts.zipWithIndex.map { case (reg, i) =>
+  (24 + nDomains * 8 + i * 8) -> Seq(RegField(reg.getWidth, reg,
+    RegFieldDesc(s"maxPut$i", s"Maximum puts for domain $i"))) }
 
-  val maxWbRegFields = maxWbs.zipWithIndex.map { case (reg, i) =>
-    4*(3 + 2*nDomains + i) -> Seq(RegField(reg.getWidth, reg,
-      RegFieldDesc(s"maxWb$i", s"Maximum writeback for domain $i"))) }
+val maxWbRegFields = maxWbs.zipWithIndex.map { case (reg, i) =>
+  (24 + 2 * nDomains * 8 + i * 8) -> Seq(RegField(reg.getWidth, reg,
+    RegFieldDesc(s"maxWb$i", s"Maximum writeback for domain $i"))) }
 
-  val bwREnablesField = Seq(4*(3 + 3*nDomains) -> bwREnables.zipWithIndex.map { case (bit, i) =>
-    RegField(bit.getWidth, bit, RegFieldDesc("bwREnables", s"Enable bandwidth regulation for ${clientNames(i)}")) })
+val bwREnablesField = Seq((24 + 3 * nDomains * 8) -> bwREnables.zipWithIndex.map { case (bit, i) =>
+  RegField(bit.getWidth, bit, RegFieldDesc("bwREnables", s"Enable bandwidth regulation for ${clientNames(i)}")) })
 
-  val domainIdFields = domainIds.zipWithIndex.map { case (reg, i) =>
-    4*(6 + 3*nDomains + i) -> Seq(RegField(reg.getWidth, reg,
-      RegFieldDesc(s"domainId$i", s"Domain ID for ${clientNames(i)}"))) }
+val domainIdFields = domainIds.zipWithIndex.map { case (reg, i) =>
+  (48 + 3 * nDomains * 8 + i * 8) -> Seq(RegField(reg.getWidth, reg,
+    RegFieldDesc(s"domainId$i", s"Domain ID for ${clientNames(i)}"))) }
 
-  val perfEnField = Seq(4*(6 + 3*nDomains + n) -> Seq(
-    RegField(perfEnable.getWidth, perfEnable,
-      RegFieldDesc("perfEnable", "perfEnable"))))
+val perfEnField = Seq((48 + 3 * nDomains * 8 + n * 8) -> Seq(
+  RegField(perfEnable.getWidth, perfEnable,
+    RegFieldDesc("perfEnable", "perfEnable"))))
 
-  val perfPeriodField = Seq(4*(7 + 3*nDomains + n) -> Seq(
-    RegField(perfPeriod.getWidth, perfPeriod,
-      RegFieldDesc("perfPeriod", "perfPeriod"))))
+val perfPeriodField = Seq((56 + 3 * nDomains * 8 + n * 8) -> Seq(
+  RegField(perfPeriod.getWidth, perfPeriod,
+    RegFieldDesc("perfPeriod", "perfPeriod"))))
 
   outer.regnode.regmap(enBRUGlobalRegField ++ settingsRegField ++ periodLenRegField ++ maxAccRegFields ++ maxPutRegFields ++ maxWbRegFields ++
     bwREnablesField ++ domainIdFields ++ perfEnField ++ perfPeriodField: _*)
