@@ -12,6 +12,7 @@ case class BRUParams (
   address: BigInt,
   nDomains: Int,
   nBanks: Int,
+  bankMask: Int,
 )
 
 case object BRUKey extends Field[Option[BRUParams]](None)
@@ -30,10 +31,10 @@ class BwRegulator(params: BRUParams) (implicit p: Parameters) extends LazyModule
     beatBytes = 8)
 
   val node = TLAdapterNode()
-  lazy val module = new BwRegulatorModule(this, params.nDomains, params.nBanks)
+  lazy val module = new BwRegulatorModule(this, params.nDomains, params.nBanks, params.bankMask)
 }
 
-class BwRegulatorModule(outer: BwRegulator, nDomains: Int, nBanks: Int) extends LazyModuleImp(outer)
+class BwRegulatorModule(outer: BwRegulator, nDomains: Int, nBanks: Int, bankMask: Int) extends LazyModuleImp(outer)
 {
   // A TLAdapterNode has equal number of input and output edges
   val n = outer.node.in.length
@@ -135,14 +136,21 @@ class BwRegulatorModule(outer: BwRegulator, nDomains: Int, nBanks: Int) extends 
 
     //per bank support
     //do we access bank j
-    val bankBits = Wire(UInt())
     for (j <- 0 until nBanks) {
-      bankBits := in.a.bits.address(6+numBankBits-1,6)
-      doesAccessBank(i)(j) := bankBits === j.U
+      doesAccessBank(i)(j) := bankIndexHelper(in.a.bits.address, bankMask.U) === j.U
       aCounters(i)(j) := Mux(perfEnable, 
                         ((out.a.fire) && (aIsRead || aIsPut) && doesAccessBank(i)(j)) + aCounters(i)(j), 0.U)
       cCounters(i)(j) := Mux(perfEnable,
                         ((edge_out.done(out.c) && cIsWb) && doesAccessBank(i)(j)) + cCounters(i)(j), 0.U)
+    }
+
+    def bankIndexHelper(address: UInt, mask: UInt): UInt = {
+      //Get bit positions in mask
+      def bankBits = (0 until mask.getWidth).filter( i => (mask.litValue & ( 1L << i )) != 0 )
+      //Index address with those bit positions
+      def bank = bankBits.map(address(_))
+      //Convert Bool seq to Vec to UInt
+      VecInit(bank).asUInt
     }
 
     out <> in
@@ -264,6 +272,6 @@ trait CanHavePeripheryBRU { this: BaseSubsystem =>
   }
 }
 
-class WithBRU(address: BigInt = 0x20000000L, nDomains: Int = 4, nBanks: Int = 2) extends Config((_, _, _) => {
-  case BRUKey => Some(BRUParams(address = address, nDomains = nDomains, nBanks = nBanks))
+class WithBRU(address: BigInt = 0x20000000L, nDomains: Int = 4, nBanks: Int = 2, bankMask: Int = 0x40) extends Config((_, _, _) => {
+  case BRUKey => Some(BRUParams(address = address, nDomains = nDomains, nBanks = nBanks, bankMask = bankMask))
 })
