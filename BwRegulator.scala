@@ -15,15 +15,15 @@ case class BRUParams (
   bankMask: Int,
 )
 
-case object BRUKey extends Field[Option[BRUParams]](None)
+case object LLCBRUKey extends Field[Option[BRUParams]](None)
 
 class BRUIO(val n: Int) extends Bundle {
   val nThrottleWb = Output(Vec(n, Bool()))
 }
 
-class BwRegulator(params: BRUParams) (implicit p: Parameters) extends LazyModule
+class BwRegulator(params: BRUParams, location: String) (implicit p: Parameters) extends LazyModule
 {
-  val device = new SimpleDevice("bru",Seq("ku-csl,bru"))
+  val device = new SimpleDevice("bru-"+location,Seq("ku-csl,bru-"+location))
 
   val regnode = new TLRegisterNode(
     address = Seq(AddressSet(params.address, 0x7ff)),
@@ -154,6 +154,7 @@ class BwRegulatorModule(outer: BwRegulator, nDomains: Int, nBanks: Int, bankMask
     }
 
     out <> in
+    out.a.bits.domainId := domainIds(i)
     io.nThrottleWb(i) := false.B
 
     when (enBRUGlobal && bwREnables(i)) {
@@ -255,12 +256,12 @@ class BwRegulatorModule(outer: BwRegulator, nDomains: Int, nBanks: Int, bankMask
     println(s"  $i => ${clientNames(i)}")
 }
 
-trait CanHavePeripheryBRU { this: BaseSubsystem =>
-  private val portName = "bru"
+trait CanHavePeripheryLLCBRU { this: BaseSubsystem =>
+  private val portName = "llc-bru"
 
-  val BwRegulator = p(BRUKey) match {
+  val BwRegulator = p(LLCBRUKey) match {
     case Some(params) => {
-      val BwRegulator = LazyModule(new BwRegulator(params)(p))
+      val BwRegulator = LazyModule(new BwRegulator(params, "llc")(p))
 
       pbus.coupleTo(portName) { 
         BwRegulator.regnode := 
@@ -273,5 +274,5 @@ trait CanHavePeripheryBRU { this: BaseSubsystem =>
 }
 
 class WithBRU(address: BigInt = 0x20000000L, nDomains: Int = 4, nBanks: Int = 2, bankMask: Int = 0x40) extends Config((_, _, _) => {
-  case BRUKey => Some(BRUParams(address = address, nDomains = nDomains, nBanks = nBanks, bankMask = bankMask))
+  case LLCBRUKey => Some(BRUParams(address = address, nDomains = nDomains, nBanks = nBanks, bankMask = bankMask))
 })
