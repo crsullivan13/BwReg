@@ -164,6 +164,7 @@ class BwRegulatorModule(outer: BwRegulator, params: BRUParams) extends LazyModul
     }
 
     out <> in
+    out.a.bits.domainId := domainIds(i)
     io.nThrottleWb(i) := false.B
 
     when (enBRUGlobal && bwREnables(i)) {
