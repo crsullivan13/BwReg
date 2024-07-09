@@ -16,7 +16,7 @@ case class BRUParams (
   withMonitor: Boolean  // avoid including this when using multiple mempress, too many edges and the regmap gets too large
 )
 
-case object LLCBRUKey extends Field[Option[BRUParams]](None)
+case object BRUKey extends Field[Option[BRUParams]](None)
 
 class BRUIO(val n: Int) extends Bundle {
   val nThrottleWb = Output(Vec(n, Bool()))
@@ -271,10 +271,10 @@ class BwRegulatorModule(outer: BwRegulator, params: BRUParams) extends LazyModul
     println(s"  $i => ${clientNames(i)}")
 }
 
-trait CanHavePeripheryLLCBRU { this: BaseSubsystem =>
+trait CanHavePeripheryBRU { this: BaseSubsystem =>
   private val portName = "llc-bru"
 
-  val BwRegulator = p(LLCBRUKey) match {
+  val BwRegulator = p(BRUKey) match {
     case Some(params) => {
       val BwRegulator = LazyModule(new BwRegulator(params, "llc")(p))
 
@@ -289,5 +289,5 @@ trait CanHavePeripheryLLCBRU { this: BaseSubsystem =>
 }
 
 class WithBRU(address: BigInt = 0x20000000L, nDomains: Int = 4, nBanks: Int = 2, bankMask: Int = 0x40, withMonitor: Boolean = false) extends Config((_, _, _) => {
-  case LLCBRUKey => Some(BRUParams(address = address, nDomains = nDomains, nBanks = nBanks, bankMask = bankMask, withMonitor = withMonitor))
+  case BRUKey => Some(BRUParams(address = address, nDomains = nDomains, nBanks = nBanks, bankMask = bankMask, withMonitor = withMonitor))
 })
