@@ -17,9 +17,40 @@ case class BRUParams (
 )
 
 case object LLCBRUKey extends Field[Option[BRUParams]](None)
+case object DRAMBRUKey extends Field[Option[BRUParams]](None)
 
 class BRUIO(val n: Int) extends Bundle {
   val nThrottleWb = Output(Vec(n, Bool()))
+}
+
+class MemRegulator(params: BRUParams, location: String)(implicit p: Parameters) extends LazyModule
+{
+
+  val device = new SimpleDevice("bru-"+location,Seq("ku-csl,bru-"+location))
+
+  val node = TLAdapterNode()
+
+  lazy val module = new Impl
+  class Impl extends LazyModuleImp(this) {
+    val n = node.in.length
+    println(s"Number of edges into DRAM BRU: $n")
+    val clients = new Array[String](n)
+
+    for ( i <- 0 until n ) {
+      val (out, edge_out) = node.out(i)
+      val (in, edge_in) = node.in(i)
+
+      out <> in
+
+      clients(i) = edge_in.client.clients(0).name
+
+      when ( out.a.fire ) {
+        SynthesizePrintf(printf("source %d, domainID %d, address %x\n", out.a.bits.source, out.a.bits.domainId, out.a.bits.address))
+      }
+    }
+
+    println(s"DRAM BRU Clients: ${clients}")
+  }
 }
 
 class BwRegulator(params: BRUParams, location: String) (implicit p: Parameters) extends LazyModule
@@ -164,7 +195,7 @@ class BwRegulatorModule(outer: BwRegulator, params: BRUParams) extends LazyModul
     }
 
     out <> in
-    out.a.bits.domainId := domainIds(i)
+    out.a.bits.domainId := 3.U // Fix this to a non-zero for the moment, easier bare-metal testing
     io.nThrottleWb(i) := false.B
 
     when (enBRUGlobal && bwREnables(i)) {
@@ -289,6 +320,23 @@ trait CanHavePeripheryLLCBRU { this: BaseSubsystem =>
   }
 }
 
+// trait CanHavePeripheryDRAMBRU { this: BaseSubsystem =>
+//   private val portName = "dram-bru"
+
+//   val MemRegulator = p(DRAMBRUKey) match {
+//     case Some(params) => {
+//       val MemRegulator = LazyModule(new MemRegulator(params, "dram")(p))
+
+//       Some(MemRegulator)
+//     }
+//     case None => None
+//   }
+// }
+
 class WithBRU(address: BigInt = 0x20000000L, nDomains: Int = 4, nBanks: Int = 2, bankMask: Int = 0x40, withMonitor: Boolean = false) extends Config((_, _, _) => {
   case LLCBRUKey => Some(BRUParams(address = address, nDomains = nDomains, nBanks = nBanks, bankMask = bankMask, withMonitor = withMonitor))
 })
+
+// class WithDRAMBRU(address: BigInt = 0x20000000L, nDomains: Int = 4, nBanks: Int = 2, bankMask: Int = 0x40, withMonitor: Boolean = false) extends Config((_, _, _) => {
+//   case DRAMBRUKey => Some(DRAMBRUParams(address = address, nDomains = nDomains, nBanks = nBanks, bankMask = bankMask, withMonitor = withMonitor))
+// })
