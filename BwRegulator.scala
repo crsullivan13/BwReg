@@ -38,7 +38,7 @@ class MemRegulator(params: BRUParams)(implicit p: Parameters) extends LazyModule
     device = device,
     beatBytes = 8)
   
-  val ioNode = BundleBridgeSink[BRUMemIO](Some(() => Flipped(new BRUMemIO(params.nDomains))))
+  //val ioNode = BundleBridgeSink[BRUMemIO](Some(() => Flipped(new BRUMemIO(params.nDomains))))
   lazy val module = new MemRegulatorModule(this, params)
 }
 
@@ -46,19 +46,19 @@ class MemRegulator(params: BRUParams)(implicit p: Parameters) extends LazyModule
 // Currently not per-bank
 class MemRegulatorModule(outer: MemRegulator, params: BRUParams) extends LazyModuleImp(outer)
 {
-  val io = outer.ioNode.bundle
+  //val io = outer.ioNode.bundle
 
   val nClients = outer.node.in.length
   require(params.nDomains <= 32)
 
-  val memBase = p(ExtMem).get.master.base.U
+  // val memBase = p(ExtMem).get.master.base.U
   var clientNames = new Array[String](nClients)
 
-  val countInstFetch = RegInit(true.B)
-  val regEnables = Reg(Vec(nClients, Bool()))
+  // val countInstFetch = RegInit(true.B)
+  // val regEnables = Reg(Vec(nClients, Bool()))
   val domainIds = Reg(Vec(nClients, UInt(log2Ceil(params.nDomains).W)))
 
-  val clientAcquireActive = Wire(Vec(nClients, Bool()))
+  //val clientAcquireActive = Wire(Vec(nClients, Bool()))
 
   // No domain generator, handled in counter module
 
@@ -68,41 +68,41 @@ class MemRegulatorModule(outer: MemRegulator, params: BRUParams) extends LazyMod
     val (in, in_edge) = outer.node.in(i)
 
     out <> in
-    out.a.bits.domainId := domainIds(i)
+    //out.a.bits.domainId := domainIds(i)
 
     // Only consider read traffic at the moment
-    val aIsAcquire = in.a.bits.opcode === TLMessages.AcquireBlock
-    val aIsInstFetch = in.a.bits.opcode === TLMessages.Get && in.a.bits.address >= memBase
+    // val aIsAcquire = in.a.bits.opcode === TLMessages.AcquireBlock
+    // val aIsInstFetch = in.a.bits.opcode === TLMessages.Get && in.a.bits.address >= memBase
 
-    val aIsRead = aIsAcquire || ( aIsInstFetch && countInstFetch )
+    // val aIsRead = aIsAcquire || ( aIsInstFetch && countInstFetch )
 
-    clientAcquireActive(i) := regEnables(i) && out.a.fire && aIsRead
+    // clientAcquireActive(i) := regEnables(i) && out.a.fire && aIsRead
 
-    when ( regEnables(i) ) {
-      when ( io.nThrottle(domainIds(i)) && aIsRead ) {
-        out.a.valid := false.B
-        in.a.ready := false.B
-        SynthesizePrintf(printf("Regulating client %d in domain %d\n", i.U, domainIds(i)))
-      }
-    }
+    // when ( regEnables(i) ) {
+    //   when ( io.nThrottle(domainIds(i)) && aIsRead ) {
+    //     out.a.valid := false.B
+    //     in.a.ready := false.B
+    //     SynthesizePrintf(printf("Regulating client %d in domain %d\n", i.U, domainIds(i)))
+    //   }
+    // }
 
     // only support cores for the moment
     clientNames(i) = in_edge.client.clients(0).name + ", " + in_edge.client.clients(2).name
   }
 
-  val settingsRegField = Seq(0 -> Seq(
-    RegField(countInstFetch.getWidth, countInstFetch,
-      RegFieldDesc("countInstFetch", "Count Instruction Fetch"))
-  ))
+  // val settingsRegField = Seq(0 -> Seq(
+  //   RegField(countInstFetch.getWidth, countInstFetch,
+  //     RegFieldDesc("countInstFetch", "Count Instruction Fetch"))
+  // ))
 
-  val regEnablesFields = Seq(8 -> regEnables.zipWithIndex.map { case (bit, i) => 
-    RegField(bit.getWidth, bit, RegFieldDesc("regEnables", s"Reg enable for ${clientNames(i)}"))})
+  // val regEnablesFields = Seq(8 -> regEnables.zipWithIndex.map { case (bit, i) => 
+  //   RegField(bit.getWidth, bit, RegFieldDesc("regEnables", s"Reg enable for ${clientNames(i)}"))})
 
   val domainIdFields = domainIds.zipWithIndex.map { case (reg, i) => 
-    (32 + i * 8) -> Seq(RegField(reg.getWidth, reg, 
+    (0 + i * 8) -> Seq(RegField(reg.getWidth, reg, 
       RegFieldDesc(s"domainId$i", s"Domain ID for ${clientNames(i)}"))) }
 
-  outer.regnode.regmap(settingsRegField ++ regEnablesFields ++ domainIdFields: _*)  
+  outer.regnode.regmap(domainIdFields: _*)  
 }
 
 class MemCounter(params: BRUParams)(implicit p: Parameters) extends LazyModule
@@ -124,8 +124,6 @@ class MemCounter(params: BRUParams)(implicit p: Parameters) extends LazyModule
 
     val nClients = node.in.length
     println(s"Number of edges into DRAM Counter: $nClients")
-    
-    p(MemoryBusKey)
 
     val memBase = p(ExtMem).get.master.base.U
     val wPeriod = 25 // for max 33.5ms period, F = 1GHz
@@ -340,7 +338,7 @@ class BwRegulatorModule(outer: BwRegulator, params: BRUParams) extends LazyModul
     }
 
     out <> in
-    out.a.bits.domainId := 3.U // Fix this to a non-zero for the moment, easier bare-metal testing
+    out.a.bits.domainId := domainIds(i) // Fix this to a non-zero for the moment, easier bare-metal testing
     io.nThrottleWb(i) := false.B
 
     when (enBRUGlobal && bwREnables(i)) {
@@ -387,11 +385,11 @@ class BwRegulatorModule(outer: BwRegulator, params: BRUParams) extends LazyModul
       RegFieldDesc("periodLen", "Period length"))))
 
   val maxAccRegFields = maxAccs.zipWithIndex.map { case (reg, i) =>
-    (24 + i * 4) -> Seq(RegField(reg.getWidth, reg,
+    (24 + i * 8) -> Seq(RegField(reg.getWidth, reg,
       RegFieldDesc(s"maxAcc$i", s"Maximum access for domain $i"))) }
 
   val maxPutRegFields = maxPuts.zipWithIndex.map { case (reg, i) =>
-    (24 + 8 * (params.nDomains + i) ) -> Seq(RegField(reg.getWidth, reg,
+    (24 + 8 * params.nDomains + i * 8 ) -> Seq(RegField(reg.getWidth, reg,
       RegFieldDesc(s"maxPut$i", s"Maximum puts for domain $i"))) }
 
   val maxWbRegFields = maxWbs.zipWithIndex.map { case (reg, i) =>
@@ -477,14 +475,6 @@ trait CanHavePeripheryDRAMBRU { this: BaseSubsystem =>
     case Some(params) => {
       val MemRegulator = LazyModule(new MemRegulator(params)(p))
 
-      // Connect the domain throttle signals, currently not per-bank
-      // mbus.memcount match {
-      //   case Some(count) => {
-      //     count.io.nThrottle.zipWithIndex.foreach{ case (signal, i) => MemRegulator.module.io.nThrottle(i) := signal }
-      //   }
-      //   case None => assert(false) // This should never happen with how the code is structured right now, i.e. both count and reg must exist, or neither exist
-      // }
-
       pbus.coupleTo(portName) {
         MemRegulator.regnode :=
         TLFragmenter(pbus.beatBytes, pbus.blockBytes) := _ }
@@ -493,8 +483,6 @@ trait CanHavePeripheryDRAMBRU { this: BaseSubsystem =>
     }
     case None => None
   }
-
-  //val MemRegulatorIO = MemRegulator.map(_.module.io)
 }
 
 class WithBRU(address: BigInt = 0x20000000L, nDomains: Int = 4, nBanks: Int = 2, bankMask: Int = 0x40, withMonitor: Boolean = false) extends Config((_, _, _) => {
