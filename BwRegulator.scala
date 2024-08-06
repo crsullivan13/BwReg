@@ -210,11 +210,11 @@ class BwRegulatorModule(outer: BwRegulator, params: BRUParams) extends LazyModul
       RegFieldDesc("periodLen", "Period length"))))
 
   val maxAccRegFields = maxAccs.zipWithIndex.map { case (reg, i) =>
-    (24 + i * 4) -> Seq(RegField(reg.getWidth, reg,
+    (24 + i * 8) -> Seq(RegField(reg.getWidth, reg,
       RegFieldDesc(s"maxAcc$i", s"Maximum access for domain $i"))) }
 
   val maxPutRegFields = maxPuts.zipWithIndex.map { case (reg, i) =>
-    (24 + 8 * (params.nDomains + i) ) -> Seq(RegField(reg.getWidth, reg,
+    (24 + 8 * params.nDomains + i * 8 ) -> Seq(RegField(reg.getWidth, reg,
       RegFieldDesc(s"maxPut$i", s"Maximum puts for domain $i"))) }
 
   val maxWbRegFields = maxWbs.zipWithIndex.map { case (reg, i) =>
