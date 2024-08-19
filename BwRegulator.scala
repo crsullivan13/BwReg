@@ -137,8 +137,10 @@ class BwRegulatorModule(outer: BwRegulator, params: BRUParams) extends LazyModul
 
     //per bank support
     //do we access bank j
+    val bankBits = Wire(UInt(params.nBanks.W))
     for (j <- 0 until params.nBanks) {
-      doesAccessBank(i)(j) := bankIndexHelper(in.a.bits.address, params.bankMask.U) === j.U
+      bankBits := in.a.bits.address(6+numBankBits-1, 6) // Can we make 6 (cache line boundary) not a magic number?
+      doesAccessBank(i)(j) := bankBits === j.U
 
       aCounters match {
         case None => // nothing
@@ -152,15 +154,6 @@ class BwRegulatorModule(outer: BwRegulator, params: BRUParams) extends LazyModul
                         ((edge_out.done(out.c) && cIsWb) && doesAccessBank(i)(j)) + cCounts(i)(j), 0.U)
       }
 
-    }
-
-    def bankIndexHelper(address: UInt, mask: UInt): UInt = {
-      //Get bit positions in mask
-      def bankBits = (0 until mask.getWidth).filter( i => (mask.litValue & ( 1L << i )) != 0 )
-      //Index address with those bit positions
-      def bank = bankBits.map(address(_))
-      //Convert Bool seq to Vec to UInt
-      VecInit(bank).asUInt
     }
 
     out <> in
