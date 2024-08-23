@@ -228,8 +228,29 @@ class BwRegulatorModule(outer: BwRegulator, params: BRUParams) extends LazyModul
     RegField(perfPeriod.getWidth, perfPeriod,
       RegFieldDesc("perfPeriod", "perfPeriod"))))
 
+  val nBanksInfoField = Seq((0x7fc) -> Seq(
+     RegField.r(32, params.nBanks.U,
+      RegFieldDesc("nBanksInfo", "nBanksInfo"))
+  ))
+
+  val nDomainsInfoField = Seq((0x7f8) -> Seq(
+    RegField.r(32, params.nDomains.U,
+      RegFieldDesc("nDomainsInfo", "nDomainsInfo"))
+  ))
+  
+  val nClientsInfoField = Seq((0x7f4) -> Seq(
+    RegField.r(32, n.U,
+      RegFieldDesc("nClientsInfo", "nClientsInfo"))
+  ))
+
+  val withMonitorInfoField = Seq((0x7f0) -> Seq(
+    RegField.r(1, params.withMonitor.B,
+      RegFieldDesc("bWithMonitorInfo", "bWithMonitorInfo"))
+  ))
+
+
   val mmreg = enBRUGlobalRegField ++ settingsRegField ++ periodLenRegField ++ maxAccRegFields ++ maxPutRegFields ++ maxWbRegFields ++ bwREnablesField ++
-      domainIdFields ++ perfEnField ++ perfPeriodField
+      domainIdFields ++ perfEnField ++ perfPeriodField  ++ nBanksInfoField ++ nDomainsInfoField ++ nClientsInfoField ++ withMonitorInfoField
 
   (aCounters, cCounters) match {
     case (Some(aCounts), Some(cCounts)) => {
