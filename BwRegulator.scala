@@ -4,9 +4,11 @@ import chisel3._
 import chisel3.util._
 import freechips.rocketchip.diplomacy._
 import freechips.rocketchip.tilelink._
+import freechips.rocketchip.tilelink.TLBundleA
 import freechips.rocketchip.regmapper._
 import midas.targetutils.SynthesizePrintf
 import org.chipsalliance.cde.config.{Parameters, Field, Config}
+import freechips.rocketchip.diplomacy.BufferParams.flow
 
 case class BRUParams (
   address: BigInt,
@@ -68,7 +70,8 @@ class MemRegulatorModule(outer: MemRegulator, params: BRUParams) extends LazyMod
     val (in, in_edge) = outer.node.in(i)
 
     out <> in
-    out.a.bits.domainId := i.U
+    out.a.bits.domainId := domainIds(i)
+    out.c.bits.domainId := domainIds(i)
 
     // Only consider read traffic at the moment
     // val aIsAcquire = in.a.bits.opcode === TLMessages.AcquireBlock
@@ -87,7 +90,7 @@ class MemRegulatorModule(outer: MemRegulator, params: BRUParams) extends LazyMod
     // }
 
     // only support cores for the moment
-    clientNames(i) = in_edge.client.clients(0).name + ", " + in_edge.client.clients(2).name
+    clientNames(i) = in_edge.client.clients(0).name
   }
 
   // val settingsRegField = Seq(0 -> Seq(
@@ -116,82 +119,132 @@ class MemCounter(params: BRUParams)(implicit p: Parameters) extends LazyModule
     device = device,
     beatBytes = 8)
 
-  val ioNode = BundleBridgeSource(() => new BRUMemIO(params.nDomains))
+  //val ioNode = BundleBridgeSource(() => new BRUMemIO(params.nDomains))
   
   lazy val module = new Impl
   class Impl extends LazyModuleImp(this) {
-    val io = ioNode.bundle
+    //val io = ioNode.bundle
 
     val nClients = node.in.length
-    println(s"Number of edges into DRAM Counter: $nClients")
+    println(s"Number of edges into DRAM Counter: $nClients ${node.in}")
+    require(nClients >= 1)
+
+    val (out, out_edge) = node.out(0)
+    val (in, in_edge) = node.in(0)
+    val outParams = out_edge.bundle
+    val inParams = in_edge.bundle
+
+    // last connect semantics should work for us here
+    out <> in
 
     val memBase = p(ExtMem).get.master.base.U
     val wPeriod = 25 // for max 33.5ms period, F = 1GHz
     val w = wPeriod - 3 // it can count up to a transaction per 8 cycles when window size is set to max
-    val clientNames = new Array[String](nClients)
+    // val clientNames = new Array[String](nClients)
 
-    val enGlobal = RegInit(false.B)
-    val countInstFetch = RegInit(true.B)
+    val enGlobal = RegInit(false.B) // CHANGE TO FALSE BEFORE SYNTHESIS
+    // val countInstFetch = RegInit(true.B)
     val periodCntr = Reg(UInt(wPeriod.W))
     val periodLen = Reg(UInt(wPeriod.W))
     val readCntrs = Reg(Vec(params.nDomains, UInt(w.W)))
     val maxReads = Reg(Vec(params.nDomains, UInt(w.W)))
 
-    val clientAcquireActive = Wire(Vec(nClients, Bool()))
+    val enDomain = Reg(Vec(params.nDomains, Bool()))
+    val domainAcquireActive = Wire(Vec(params.nDomains, Bool()))
+
+    val queues = Seq.fill(params.nDomains)(Module(new Queue(new TLBundleA(inParams), 24, flow=true)))
+    val domainArbiter = Module(new RRArbiter(new TLBundleA(inParams), params.nDomains))
+    //val bypassArbiter = Module(new Arbiter(new TLBundleA(inParams), 2))
 
     val periodCntrReset = periodCntr >= periodLen
     periodCntr := Mux(periodCntrReset || !enGlobal, 0.U, periodCntr + 1.U)
 
-    // Generator for client edges (Cache banks in this case)
-    for ( i <- 0 until nClients ) {
-      val (out, _) = node.out(i)
-      val (in, edge_in) = node.in(i)
+    // set some stuff for metasim debug, REMOVE BEFORE SYNTHESIS
+    // enDomain(1.U) := true.B
+    // maxReads(1.U) := 1.U
+    // periodLen := 200.U
 
-      out <> in
+    // arbitrate between bypass (unregulated) and queues (regulated)
+    // standard arbiter gives priority to lower index
+    //bypassArbiter.io.in(1.U) <> domainArbiter.io.out
 
-      val aIsAcquire = in.a.bits.opcode === TLMessages.AcquireBlock
-      val aIsInstFetch = in.a.bits.opcode === TLMessages.Get && in.a.bits.address >= memBase
+    // bypass the queues if regulation isn't enabled for the domain
+    //bypassArbiter.io.in(0.U).valid := in.a.valid && !(enGlobal && enDomain(in.a.bits.domainId))
+    //bypassArbiter.io.in(0.U).bits := in.a.bits
 
-      val aIsRead = aIsAcquire || ( aIsInstFetch && countInstFetch )
+    val selectedQueue = MuxLookup(in.a.bits.domainId, queues(0).io.enq.ready, (0 until params.nDomains).map(i => i.U -> queues(i).io.enq.ready))
+    //val isRegulated = enGlobal && enDomain(in.a.bits.domainId)
+    in.a.ready := selectedQueue
+    //in.a.ready := (bypassArbiter.io.in(0.U).ready && !isRegulated) || (selectedQueue && isRegulated)
 
-      clientAcquireActive(i) := out.a.fire && aIsRead
+    // when ( in.a.fire && !enDomain(in.a.bits.domainId) ) {
+    //   printf(s"Bypass domainID %d %d\n", in.a.bits.domainId, bypassArbiter.io.out.fire)
+    // }
 
-      // Generator for domains, all-bank at the moment
-      for ( j <- 0 until params.nDomains ) {
-        val clientAcquireInDomain = j.U === in.a.bits.domainId && clientAcquireActive(i)
+    // when ( periodCntrReset ) {
+    //   printf(s"Period reset\n")
+    // }
 
-        readCntrs(j) := Mux(enGlobal, clientAcquireInDomain + Mux(periodCntrReset, 0.U, readCntrs(j)), 0.U)
+    for ( domain <- 0 until params.nDomains ) {
+      // when ( in.a.fire && (in.a.bits.domainId === domain.U) && enDomain(in.a.bits.domainId) ) {
+      //   printf(s"Enq to queue %d\n", in.a.bits.domainId)
+      // }
 
-        io.nThrottle(j) := readCntrs(j) >= maxReads(j)
+      // when regulation enabled for domain, send request to correct queue
+      // otherwise we bypass the queues
+      queues(domain).io.enq.valid := in.a.valid && (in.a.bits.domainId === domain.U)
+      queues(domain).io.enq.bits := in.a.bits
+
+      domainArbiter.io.in(domain) <> queues(domain).io.deq
+
+      domainAcquireActive(domain) := domainArbiter.io.in(domain).fire && domainArbiter.io.in(domain).bits.opcode === TLMessages.Get
+
+      // when ( domainAcquireActive(domain) ) {
+      //   printf(s"Domain %d active, counter is %d\n", domain.U, readCntrs(domain))
+      // }
+      when ( queues(domain).io.deq.fire ) {
+        SynthesizePrintf(printf(s"Deq domainID %d, opcode %d, source %d\n", queues(domain).io.deq.bits.domainId, 
+                                queues(domain).io.deq.bits.opcode, queues(domain).io.deq.bits.source))
       }
 
-      clientNames(i) = edge_in.client.clients(0).name
+      readCntrs(domain) := Mux(enGlobal, domainAcquireActive(domain) + Mux(periodCntrReset, 0.U, readCntrs(domain)), 0.U)
 
-      when ( out.a.fire ) {
-        SynthesizePrintf(printf("source %d, domainID %d, address %x\n", out.a.bits.source, out.a.bits.domainId, out.a.bits.address))
+      when ( enGlobal && enDomain(domain) ) {
+        when ( readCntrs(domain) >= maxReads(domain) ) {
+          //printf(s"Throttle domain %d\n", domain.U)
+          queues(domain).io.deq.ready := false.B
+          domainArbiter.io.in(domain).valid := false.B
+        }
       }
-    } 
+    }
+
+    //out.a <> bypassArbiter.io.out
+    out.a <> domainArbiter.io.out
+
+    // when ( domainArbiter.io.out.fire && out.a.fire ) {
+    //   SynthesizePrintf(printf(s"Deq domainID %d, opcode %d\n", out.a.bits.domainId, out.a.bits.opcode))
+    // }
 
     val enGlobalField = Seq(0 -> Seq(
       RegField(enGlobal.getWidth, enGlobal, RegFieldDesc("enGlobal", "Global Enable"))))
 
-    val settingsRegField = Seq(8 -> Seq(
-      RegField(countInstFetch.getWidth, countInstFetch, 
-        RegFieldDesc("countInstFetch", "Count Instruction Fetch"))))
-
-    val periodLenRegField = Seq(16 -> Seq(
+    val periodLenRegField = Seq(8 -> Seq(
       RegField(periodLen.getWidth, periodLen,
         RegFieldDesc("periodLen", "Period length"))))
     
     val maxReadRegFields = maxReads.zipWithIndex.map { case (reg, i) =>
-      (24 + i * 4) -> Seq(RegField(reg.getWidth, reg,
+      (16 + i * 8) -> Seq(RegField(reg.getWidth, reg,
         RegFieldDesc(s"maxAcc$i", s"Maximum access for domain $i"))) }
 
-    regnode.regmap(enGlobalField ++ settingsRegField ++ periodLenRegField ++
-      maxReadRegFields: _*)
+    val enDomainRegFields = enDomain.zipWithIndex.map { case (reg, i) =>
+      (48 + i * 8) -> Seq(RegField(reg.getWidth, reg,
+        RegFieldDesc(s"enDomain$i", s"Per-domian reg enable $i"))) }
 
-    println(s"DRAM Counter Clients:")
-    clientNames.foreach( str => println(s"Client: ${str}"))
+    regnode.regmap(enGlobalField ++ periodLenRegField ++
+      maxReadRegFields ++ enDomainRegFields: _*)
+
+    // println(s"DRAM Reg Clients:")
+    // clientNames.foreach( str => println(s"Client: ${str}"))
   }
 }
 
