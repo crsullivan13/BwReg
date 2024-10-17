@@ -81,6 +81,14 @@ class MemRegulatorModule(outer: MemRegulator, params: BRUParams) extends LazyMod
 
     // clientAcquireActive(i) := regEnables(i) && out.a.fire && aIsRead
 
+    when ( out.a.fire ) {
+      SynthesizePrintf(printf(s"ChanA Core %d, opcode %d, address %x\n", i.U, out.a.bits.opcode, out.a.bits.address))
+    }
+
+    when ( out.c.fire ) {
+      SynthesizePrintf(printf(s"ChanC Core %d, opcode %d, address %x\n", i.U, out.c.bits.opcode, out.c.bits.address))
+    }
+
     // when ( regEnables(i) ) {
     //   when ( io.nThrottle(domainIds(i)) && aIsRead ) {
     //     out.a.valid := false.B
@@ -160,8 +168,10 @@ class MemCounter(params: BRUParams)(implicit p: Parameters) extends LazyModule
     periodCntr := Mux(periodCntrReset || !enGlobal, 0.U, periodCntr + 1.U)
 
     // set some stuff for metasim debug, REMOVE BEFORE SYNTHESIS
+    // enDomain(0.U) := true.B
+    // maxReads(0.U) := 3.U
     // enDomain(1.U) := true.B
-    // maxReads(1.U) := 1.U
+    // maxReads(1.U) := 3.U
     // periodLen := 200.U
 
     // arbitrate between bypass (unregulated) and queues (regulated)
@@ -185,10 +195,27 @@ class MemCounter(params: BRUParams)(implicit p: Parameters) extends LazyModule
     //   printf(s"Period reset\n")
     // }
 
+    val lockDomain = RegInit(false.B)
+    val beatingDomain = RegInit(params.nDomains.U)
+    val (a_first, a_last, _) = out_edge.firstlast(domainArbiter.io.out)
+
+    when ( a_first && !a_last ) {
+      lockDomain := true.B
+      beatingDomain := domainArbiter.io.out.bits.domainId
+      SynthesizePrintf(printf(s"Domain %d locks\n", domainArbiter.io.out.bits.domainId))
+    }
+
+    when ( a_last ) {
+      lockDomain := false.B
+      SynthesizePrintf(printf(s"Domain %d un-locks\n", domainArbiter.io.out.bits.domainId))
+    }
+
     for ( domain <- 0 until params.nDomains ) {
       // when ( in.a.fire && (in.a.bits.domainId === domain.U) && enDomain(in.a.bits.domainId) ) {
       //   printf(s"Enq to queue %d\n", in.a.bits.domainId)
       // }
+
+      assert(queues(domain).io.count =/= 24.U)
 
       // when regulation enabled for domain, send request to correct queue
       // otherwise we bypass the queues
@@ -209,9 +236,14 @@ class MemCounter(params: BRUParams)(implicit p: Parameters) extends LazyModule
 
       readCntrs(domain) := Mux(enGlobal, domainAcquireActive(domain) + Mux(periodCntrReset, 0.U, readCntrs(domain)), 0.U)
 
+      when ( lockDomain && ( beatingDomain =/= domain.U ) ) {
+        //SynthesizePrintf(printf(s"Locked domain %d, active domain %d\n", domain.U, beatingDomain))
+        domainArbiter.io.in(domain).valid := false.B
+      }
+
       when ( enGlobal && enDomain(domain) ) {
         when ( readCntrs(domain) >= maxReads(domain) ) {
-          //printf(s"Throttle domain %d\n", domain.U)
+          //SynthesizePrintf(printf(s"Throttle domain %d\n", domain.U))
           queues(domain).io.deq.ready := false.B
           domainArbiter.io.in(domain).valid := false.B
         }
