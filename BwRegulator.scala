@@ -44,23 +44,16 @@ class MemRegulator(params: BRUParams)(implicit p: Parameters) extends LazyModule
   lazy val module = new MemRegulatorModule(this, params)
 }
 
-// Module that sits before the LLC, throttles based on signal from counter module
-// Currently not per-bank
+// Module that sits before the LLC, tags domain id onto TL requests
 class MemRegulatorModule(outer: MemRegulator, params: BRUParams) extends LazyModuleImp(outer)
 {
-  //val io = outer.ioNode.bundle
-
   val nClients = outer.node.in.length
   require(params.nDomains <= 32)
 
   // val memBase = p(ExtMem).get.master.base.U
   var clientNames = new Array[String](nClients)
 
-  // val countInstFetch = RegInit(true.B)
-  // val regEnables = Reg(Vec(nClients, Bool()))
   val domainIds = Reg(Vec(nClients, UInt(log2Ceil(params.nDomains).W)))
-
-  //val clientAcquireActive = Wire(Vec(nClients, Bool()))
 
   // No domain generator, handled in counter module
 
@@ -73,14 +66,6 @@ class MemRegulatorModule(outer: MemRegulator, params: BRUParams) extends LazyMod
     out.a.bits.domainId := domainIds(i)
     out.c.bits.domainId := domainIds(i)
 
-    // Only consider read traffic at the moment
-    // val aIsAcquire = in.a.bits.opcode === TLMessages.AcquireBlock
-    // val aIsInstFetch = in.a.bits.opcode === TLMessages.Get && in.a.bits.address >= memBase
-
-    // val aIsRead = aIsAcquire || ( aIsInstFetch && countInstFetch )
-
-    // clientAcquireActive(i) := regEnables(i) && out.a.fire && aIsRead
-
     when ( out.a.fire ) {
       SynthesizePrintf(printf(s"ChanA Core %d, opcode %d, address %x\n", i.U, out.a.bits.opcode, out.a.bits.address))
     }
@@ -89,25 +74,9 @@ class MemRegulatorModule(outer: MemRegulator, params: BRUParams) extends LazyMod
       SynthesizePrintf(printf(s"ChanC Core %d, opcode %d, address %x\n", i.U, out.c.bits.opcode, out.c.bits.address))
     }
 
-    // when ( regEnables(i) ) {
-    //   when ( io.nThrottle(domainIds(i)) && aIsRead ) {
-    //     out.a.valid := false.B
-    //     in.a.ready := false.B
-    //     SynthesizePrintf(printf("Regulating client %d in domain %d\n", i.U, domainIds(i)))
-    //   }
-    // }
-
     // only support cores for the moment
     clientNames(i) = in_edge.client.clients(0).name
   }
-
-  // val settingsRegField = Seq(0 -> Seq(
-  //   RegField(countInstFetch.getWidth, countInstFetch,
-  //     RegFieldDesc("countInstFetch", "Count Instruction Fetch"))
-  // ))
-
-  // val regEnablesFields = Seq(8 -> regEnables.zipWithIndex.map { case (bit, i) => 
-  //   RegField(bit.getWidth, bit, RegFieldDesc("regEnables", s"Reg enable for ${clientNames(i)}"))})
 
   val domainIdFields = domainIds.zipWithIndex.map { case (reg, i) => 
     (0 + i * 8) -> Seq(RegField(reg.getWidth, reg, 
@@ -126,12 +95,9 @@ class MemCounter(params: BRUParams)(implicit p: Parameters) extends LazyModule
     address = Seq(AddressSet(params.address, 0x7ff)),
     device = device,
     beatBytes = 8)
-
-  //val ioNode = BundleBridgeSource(() => new BRUMemIO(params.nDomains))
   
   lazy val module = new Impl
   class Impl extends LazyModuleImp(this) {
-    //val io = ioNode.bundle
 
     val nClients = node.in.length
     println(s"Number of edges into DRAM Counter: $nClients ${node.in}")
@@ -191,23 +157,20 @@ class MemCounter(params: BRUParams)(implicit p: Parameters) extends LazyModule
     //   printf(s"Bypass domainID %d %d\n", in.a.bits.domainId, bypassArbiter.io.out.fire)
     // }
 
-    // when ( periodCntrReset ) {
-    //   printf(s"Period reset\n")
-    // }
-
     val lockDomain = RegInit(false.B)
     val beatingDomain = RegInit(params.nDomains.U)
-    val (a_first, a_last, _) = out_edge.firstlast(domainArbiter.io.out)
+    val (a_first, a_last, a_done) = out_edge.firstlast(domainArbiter.io.out)
 
-    when ( a_first && !a_last ) {
+    // first can be high even if we don't fire, make sure we fire
+    when ( a_first && !a_last && domainArbiter.io.out.fire ) {
       lockDomain := true.B
       beatingDomain := domainArbiter.io.out.bits.domainId
-      SynthesizePrintf(printf(s"Domain %d locks\n", domainArbiter.io.out.bits.domainId))
+      //SynthesizePrintf(printf(s"Domain %d locks\n", domainArbiter.io.out.bits.domainId))
     }
 
-    when ( a_last ) {
+    when ( a_done ) {
       lockDomain := false.B
-      SynthesizePrintf(printf(s"Domain %d un-locks\n", domainArbiter.io.out.bits.domainId))
+      //SynthesizePrintf(printf(s"Domain %d un-locks\n", domainArbiter.io.out.bits.domainId))
     }
 
     for ( domain <- 0 until params.nDomains ) {
@@ -215,7 +178,8 @@ class MemCounter(params: BRUParams)(implicit p: Parameters) extends LazyModule
       //   printf(s"Enq to queue %d\n", in.a.bits.domainId)
       // }
 
-      assert(queues(domain).io.count =/= 24.U)
+      // this fills up fast because of multi-beat
+      //assert(queues(domain).io.count =/= 24.U)
 
       // when regulation enabled for domain, send request to correct queue
       // otherwise we bypass the queues
@@ -226,9 +190,6 @@ class MemCounter(params: BRUParams)(implicit p: Parameters) extends LazyModule
 
       domainAcquireActive(domain) := domainArbiter.io.in(domain).fire && domainArbiter.io.in(domain).bits.opcode === TLMessages.Get
 
-      // when ( domainAcquireActive(domain) ) {
-      //   printf(s"Domain %d active, counter is %d\n", domain.U, readCntrs(domain))
-      // }
       when ( queues(domain).io.deq.fire ) {
         SynthesizePrintf(printf(s"Deq domainID %d, opcode %d, source %d\n", queues(domain).io.deq.bits.domainId, 
                                 queues(domain).io.deq.bits.opcode, queues(domain).io.deq.bits.source))
@@ -238,12 +199,13 @@ class MemCounter(params: BRUParams)(implicit p: Parameters) extends LazyModule
 
       when ( lockDomain && ( beatingDomain =/= domain.U ) ) {
         //SynthesizePrintf(printf(s"Locked domain %d, active domain %d\n", domain.U, beatingDomain))
+        queues(domain).io.deq.ready := false.B
         domainArbiter.io.in(domain).valid := false.B
       }
 
       when ( enGlobal && enDomain(domain) ) {
         when ( readCntrs(domain) >= maxReads(domain) ) {
-          //SynthesizePrintf(printf(s"Throttle domain %d\n", domain.U))
+          SynthesizePrintf(printf(s"Throttle domain %d\n", domain.U))
           queues(domain).io.deq.ready := false.B
           domainArbiter.io.in(domain).valid := false.B
         }
