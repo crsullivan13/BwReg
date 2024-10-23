@@ -126,7 +126,7 @@ class MemCounter(params: BRUParams)(implicit p: Parameters) extends LazyModule
     val enDomain = Reg(Vec(params.nDomains, Bool()))
     val domainAcquireActive = Wire(Vec(params.nDomains, Bool()))
 
-    val queues = Seq.fill(params.nDomains)(Module(new Queue(new TLBundleA(inParams), 24, flow=true)))
+    val queues = Seq.fill(params.nDomains)(Module(new Queue(new TLBundleA(inParams), 128, flow=true)))
     val domainArbiter = Module(new RRArbiter(new TLBundleA(inParams), params.nDomains))
     //val bypassArbiter = Module(new Arbiter(new TLBundleA(inParams), 2))
 
@@ -180,6 +180,9 @@ class MemCounter(params: BRUParams)(implicit p: Parameters) extends LazyModule
 
       // this fills up fast because of multi-beat
       //assert(queues(domain).io.count =/= 24.U)
+      when ( queues(domain).io.count === 128.U ) {
+        SynthesizePrintf(printf(s"Domain %d queue is full\n", domain.U))
+      }
 
       // when regulation enabled for domain, send request to correct queue
       // otherwise we bypass the queues
@@ -205,7 +208,7 @@ class MemCounter(params: BRUParams)(implicit p: Parameters) extends LazyModule
 
       when ( enGlobal && enDomain(domain) ) {
         when ( readCntrs(domain) >= maxReads(domain) ) {
-          SynthesizePrintf(printf(s"Throttle domain %d\n", domain.U))
+          //SynthesizePrintf(printf(s"Throttle domain %d\n", domain.U))
           queues(domain).io.deq.ready := false.B
           domainArbiter.io.in(domain).valid := false.B
         }
