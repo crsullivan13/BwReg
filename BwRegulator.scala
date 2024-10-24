@@ -67,11 +67,11 @@ class MemRegulatorModule(outer: MemRegulator, params: BRUParams) extends LazyMod
     out.c.bits.domainId := domainIds(i)
 
     when ( out.a.fire ) {
-      SynthesizePrintf(printf(s"ChanA Core %d, opcode %d, address %x\n", i.U, out.a.bits.opcode, out.a.bits.address))
+      //SynthesizePrintf(printf(s"ChanA Core %d, opcode %d, address %x\n", i.U, out.a.bits.opcode, out.a.bits.address))
     }
 
     when ( out.c.fire ) {
-      SynthesizePrintf(printf(s"ChanC Core %d, opcode %d, address %x\n", i.U, out.c.bits.opcode, out.c.bits.address))
+      //SynthesizePrintf(printf(s"ChanC Core %d, opcode %d, address %x\n", i.U, out.c.bits.opcode, out.c.bits.address))
     }
 
     // only support cores for the moment
@@ -126,7 +126,7 @@ class MemCounter(params: BRUParams)(implicit p: Parameters) extends LazyModule
     val enDomain = Reg(Vec(params.nDomains, Bool()))
     val domainAcquireActive = Wire(Vec(params.nDomains, Bool()))
 
-    val queues = Seq.fill(params.nDomains)(Module(new Queue(new TLBundleA(inParams), 128, flow=true)))
+    val queues = Seq.fill(params.nDomains)(Module(new Queue(new TLBundleA(inParams), 256, flow=true)))
     val domainArbiter = Module(new RRArbiter(new TLBundleA(inParams), params.nDomains))
     //val bypassArbiter = Module(new Arbiter(new TLBundleA(inParams), 2))
 
@@ -180,8 +180,12 @@ class MemCounter(params: BRUParams)(implicit p: Parameters) extends LazyModule
 
       // this fills up fast because of multi-beat
       //assert(queues(domain).io.count =/= 24.U)
-      when ( queues(domain).io.count === 128.U ) {
+      when ( queues(domain).io.count === 256.U ) {
         SynthesizePrintf(printf(s"Domain %d queue is full\n", domain.U))
+      }
+
+      when ( queues(domain).io.enq.fire ) {
+        SynthesizePrintf(printf(s"Domain %d queue count is %d\n", domain.U, queues(domain).io.count))
       }
 
       // when regulation enabled for domain, send request to correct queue
@@ -198,7 +202,7 @@ class MemCounter(params: BRUParams)(implicit p: Parameters) extends LazyModule
                                 queues(domain).io.deq.bits.opcode, queues(domain).io.deq.bits.source))
       }
 
-      readCntrs(domain) := Mux(enGlobal, domainAcquireActive(domain) + Mux(periodCntrReset, 0.U, readCntrs(domain)), 0.U)
+      readCntrs(domain) := Mux(enGlobal, (domainAcquireActive(domain)) + Mux(periodCntrReset, 0.U, readCntrs(domain)), 0.U)
 
       when ( lockDomain && ( beatingDomain =/= domain.U ) ) {
         //SynthesizePrintf(printf(s"Locked domain %d, active domain %d\n", domain.U, beatingDomain))
