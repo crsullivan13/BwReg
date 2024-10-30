@@ -15,7 +15,7 @@ case class BRUParams (
   nDomains: Int,
   nBanks: Int,
   bankMask: Int,
-  withMonitor: Boolean  // avoid including this when using multiple mempress, too many edges and the regmap gets too large
+  withMonitor: Boolean  // avoid including this when using multiple mempress, too many edges and the regmap gets too large..
 )
 
 case object LLCBRUKey extends Field[Option[BRUParams]](None)
@@ -40,7 +40,7 @@ class MemRegulator(params: BRUParams)(implicit p: Parameters) extends LazyModule
     device = device,
     beatBytes = 8)
   
-  //val ioNode = BundleBridgeSink[BRUMemIO](Some(() => Flipped(new BRUMemIO(params.nDomains))))
+  //val ioNode = BundleBridgeSink[BRUMemIO](Some(() => Flipped(new BRUMemIO(params.nDomains))))..
   lazy val module = new MemRegulatorModule(this, params)
 }
 
@@ -113,7 +113,7 @@ class MemCounter(params: BRUParams)(implicit p: Parameters) extends LazyModule
 
     val memBase = p(ExtMem).get.master.base.U
     val wPeriod = 25 // for max 33.5ms period, F = 1GHz
-    val w = wPeriod - 3 // it can count up to a transaction per 8 cycles when window size is set to max
+    val w = wPeriod - 3 // it can count up to a transaction per 8 cycles when window size is set to max..
     // val clientNames = new Array[String](nClients)
 
     val enGlobal = RegInit(false.B) // CHANGE TO FALSE BEFORE SYNTHESIS
@@ -126,9 +126,8 @@ class MemCounter(params: BRUParams)(implicit p: Parameters) extends LazyModule
     val enDomain = Reg(Vec(params.nDomains, Bool()))
     val domainAcquireActive = Wire(Vec(params.nDomains, Bool()))
 
-    val queues = Seq.fill(params.nDomains)(Module(new Queue(new TLBundleA(inParams), 256, flow=true)))
+    val queues = Seq.fill(params.nDomains)(Module(new Queue(new TLBundleA(inParams), 128, flow=true)))
     val domainArbiter = Module(new RRArbiter(new TLBundleA(inParams), params.nDomains))
-    //val bypassArbiter = Module(new Arbiter(new TLBundleA(inParams), 2))
 
     val periodCntrReset = periodCntr >= periodLen
     periodCntr := Mux(periodCntrReset || !enGlobal, 0.U, periodCntr + 1.U)
@@ -140,22 +139,21 @@ class MemCounter(params: BRUParams)(implicit p: Parameters) extends LazyModule
     // maxReads(1.U) := 3.U
     // periodLen := 200.U
 
-    // arbitrate between bypass (unregulated) and queues (regulated)
-    // standard arbiter gives priority to lower index
-    //bypassArbiter.io.in(1.U) <> domainArbiter.io.out
-
-    // bypass the queues if regulation isn't enabled for the domain
-    //bypassArbiter.io.in(0.U).valid := in.a.valid && !(enGlobal && enDomain(in.a.bits.domainId))
-    //bypassArbiter.io.in(0.U).bits := in.a.bits
-
     val selectedQueue = MuxLookup(in.a.bits.domainId, queues(0).io.enq.ready, (0 until params.nDomains).map(i => i.U -> queues(i).io.enq.ready))
-    //val isRegulated = enGlobal && enDomain(in.a.bits.domainId)
-    in.a.ready := selectedQueue
-    //in.a.ready := (bypassArbiter.io.in(0.U).ready && !isRegulated) || (selectedQueue && isRegulated)
+    val isRegulated = WireInit(false.B)
+    isRegulated := enGlobal && enDomain(in.a.bits.domainId)
+    //in.a.ready := selectedQueue
 
-    // when ( in.a.fire && !enDomain(in.a.bits.domainId) ) {
-    //   printf(s"Bypass domainID %d %d\n", in.a.bits.domainId, bypassArbiter.io.out.fire)
-    // }
+    val bypass_a = Wire(in.a.cloneType)
+    TLArbiter.lowest(out_edge, out.a, bypass_a, domainArbiter.io.out)
+    bypass_a <> in.a
+    bypass_a.valid := in.a.valid && !isRegulated
+
+    in.a.ready := (bypass_a.ready && !isRegulated) || (selectedQueue && isRegulated)
+
+    when ( bypass_a.fire && !isRegulated ) {
+      //SynthesizePrintf(printf(s"Bypass domainID %d\n", in.a.bits.domainId))
+    }
 
     val lockDomain = RegInit(false.B)
     val beatingDomain = RegInit(params.nDomains.U)
@@ -165,32 +163,22 @@ class MemCounter(params: BRUParams)(implicit p: Parameters) extends LazyModule
     when ( a_first && !a_last && domainArbiter.io.out.fire ) {
       lockDomain := true.B
       beatingDomain := domainArbiter.io.out.bits.domainId
-      //SynthesizePrintf(printf(s"Domain %d locks\n", domainArbiter.io.out.bits.domainId))
     }
 
     when ( a_done ) {
       lockDomain := false.B
-      //SynthesizePrintf(printf(s"Domain %d un-locks\n", domainArbiter.io.out.bits.domainId))
     }
 
     for ( domain <- 0 until params.nDomains ) {
-      // when ( in.a.fire && (in.a.bits.domainId === domain.U) && enDomain(in.a.bits.domainId) ) {
-      //   printf(s"Enq to queue %d\n", in.a.bits.domainId)
-      // }
-
-      // this fills up fast because of multi-beat
-      //assert(queues(domain).io.count =/= 24.U)
-      when ( queues(domain).io.count === 256.U ) {
-        SynthesizePrintf(printf(s"Domain %d queue is full\n", domain.U))
-      }
+      assert( queues(domain).io.count =/= 128.U )
 
       when ( queues(domain).io.enq.fire ) {
-        SynthesizePrintf(printf(s"Domain %d queue count is %d\n", domain.U, queues(domain).io.count))
+        //SynthesizePrintf(printf(s"Domain %d queue count is %d\n", domain.U, queues(domain).io.count))
       }
 
       // when regulation enabled for domain, send request to correct queue
-      // otherwise we bypass the queues
-      queues(domain).io.enq.valid := in.a.valid && (in.a.bits.domainId === domain.U)
+      // otherwise we bypass the queues.
+      queues(domain).io.enq.valid := in.a.valid && (in.a.bits.domainId === domain.U) && isRegulated
       queues(domain).io.enq.bits := in.a.bits
 
       domainArbiter.io.in(domain) <> queues(domain).io.deq
@@ -205,7 +193,7 @@ class MemCounter(params: BRUParams)(implicit p: Parameters) extends LazyModule
       readCntrs(domain) := Mux(enGlobal, (domainAcquireActive(domain)) + Mux(periodCntrReset, 0.U, readCntrs(domain)), 0.U)
 
       when ( lockDomain && ( beatingDomain =/= domain.U ) ) {
-        //SynthesizePrintf(printf(s"Locked domain %d, active domain %d\n", domain.U, beatingDomain))
+        //SynthesizePrintf(printf(s"Locked domain %d, active domain %d\n", domain.U, beatingDomain))..
         queues(domain).io.deq.ready := false.B
         domainArbiter.io.in(domain).valid := false.B
       }
@@ -218,13 +206,6 @@ class MemCounter(params: BRUParams)(implicit p: Parameters) extends LazyModule
         }
       }
     }
-
-    //out.a <> bypassArbiter.io.out
-    out.a <> domainArbiter.io.out
-
-    // when ( domainArbiter.io.out.fire && out.a.fire ) {
-    //   SynthesizePrintf(printf(s"Deq domainID %d, opcode %d\n", out.a.bits.domainId, out.a.bits.opcode))
-    // }
 
     val enGlobalField = Seq(0 -> Seq(
       RegField(enGlobal.getWidth, enGlobal, RegFieldDesc("enGlobal", "Global Enable"))))
