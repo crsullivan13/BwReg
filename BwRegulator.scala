@@ -116,23 +116,23 @@ class MemCounter(params: BRUParams)(implicit p: Parameters) extends LazyModule
     val w = wPeriod - 3 // it can count up to a transaction per 8 cycles when window size is set to max
     // val clientNames = new Array[String](nClients)
 
+    val numBanks = 8
+    val queueCount = numBanks * params.nDomains
+    val bankMask = 0x7
+
     val enGlobal = RegInit(false.B) // CHANGE TO FALSE BEFORE SYNTHESIS
     // val countInstFetch = RegInit(true.B)
     val periodCntr = Reg(UInt(wPeriod.W))
     val periodLen = Reg(UInt(wPeriod.W))
-    val readCntrs = Reg(Vec(params.nDomains, UInt(w.W)))
+    val readCntrs = Reg(Vec(queueCount, UInt(w.W)))
     val maxReads = Reg(Vec(params.nDomains, UInt(w.W)))
 
     val enDomain = Reg(Vec(params.nDomains, Bool()))
 
-    val numBanks = 8
-
     // magic number for number of banks -> 8
     // keep the list flat for "easier" indexing? -> makes queue select for ready easier
-    val queueCount = numBanks * params.nDomains
     val queues = Seq.fill(queueCount)(Module(new Queue(new TLBundleA(inParams), 128, flow=true)))
-    val domainBankArbs = Seq.fill(params.nDomains)(new RRArbiter(new TLBundleA(inParams), 8))
-    val domainArbiter = Module(new RRArbiter(new TLBundleA(inParams), params.nDomains))
+    val domainBankArbs = Seq.fill(params.nDomains)(Module(new RRArbiter(new TLBundleA(inParams), 8)))
     val queueAcquireActive = Wire(Vec(queueCount, Bool()))
     //val bypassArbiter = Module(new Arbiter(new TLBundleA(inParams), 2))
 
@@ -154,7 +154,7 @@ class MemCounter(params: BRUParams)(implicit p: Parameters) extends LazyModule
     //bypassArbiter.io.in(0.U).valid := in.a.valid && !(enGlobal && enDomain(in.a.bits.domainId))
     //bypassArbiter.io.in(0.U).bits := in.a.bits
 
-    val selectedBank = (in.a.bits.address >> 13.U) & 0xe.U
+    val selectedBank = (in.a.bits.address >> 13.U) & bankMask.U
     val selectedBankAdjusted = selectedBank + (numBanks.U * in.a.bits.domainId)
     val selectedQueue = MuxLookup(selectedBankAdjusted, queues(0).io.enq.ready, (0 until queueCount).map(i => i.U -> queues(i).io.enq.ready))
     //val isRegulated = enGlobal && enDomain(in.a.bits.domainId)
@@ -162,7 +162,7 @@ class MemCounter(params: BRUParams)(implicit p: Parameters) extends LazyModule
     //in.a.ready := (bypassArbiter.io.in(0.U).ready && !isRegulated) || (selectedQueue && isRegulated)
 
     val lockDomainQueue = RegInit(VecInit(Seq.fill(params.nDomains)(false.B)))
-    val beatingDomainQueue = RegInit(VecInit(Seq.fill(params.nDomains)(params.nDomains.U)))
+    val beatingDomainQueue = RegInit(VecInit(Seq.fill(params.nDomains)(queueCount.U)))
 
     for ( domain <- 0 until params.nDomains ) {
       val domainArb = domainBankArbs(domain).io.out
@@ -173,13 +173,13 @@ class MemCounter(params: BRUParams)(implicit p: Parameters) extends LazyModule
       // first can be high even if we don't fire, make sure we fire
       when ( a_first && !a_last && domainArb.fire ) {
         lockDomainQueue(domain) := true.B
-        beatingDomainQueue(domain) := (domainArb.bits.address >> 13.U) & 0xe.U
-        //SynthesizePrintf(printf(s"Domain %d locks\n", domainArbiter.io.out.bits.domainId))
+        beatingDomainQueue(domain) := (domainArb.bits.address >> 13.U) & bankMask.U
+        SynthesizePrintf(printf(s"Domain %d, queue %d locks\n", domain.U, (domainArb.bits.address >> 13.U) & bankMask.U))
       }
 
       when ( a_done ) {
         lockDomainQueue(domain) := false.B
-        //SynthesizePrintf(printf(s"Domain %d un-locks\n", domainArbiter.io.out.bits.domainId))
+        SynthesizePrintf(printf(s"Domain %d un-locks\n", domain.U))
       }
     }
 
@@ -194,7 +194,7 @@ class MemCounter(params: BRUParams)(implicit p: Parameters) extends LazyModule
       // this fills up fast because of multi-beat
       //assert(queues(domain).io.count =/= 24.U)
       when ( queues(queue).io.count === 128.U ) {
-        SynthesizePrintf(printf(s"Domain %d queue is full\n", queue.U))
+        SynthesizePrintf(printf(s"Queue %d is full\n", queue.U))
       }
 
       // when regulation enabled for domain, send request to correct queue
@@ -207,19 +207,19 @@ class MemCounter(params: BRUParams)(implicit p: Parameters) extends LazyModule
       queueAcquireActive(queue) := arbInput.fire && arbInput.bits.opcode === TLMessages.Get
 
       when ( queues(queue).io.deq.fire ) {
-        SynthesizePrintf(printf(s"Deq domainID %d, opcode %d, source %d\n", queues(queue).io.deq.bits.domainId, 
-                                queues(queue).io.deq.bits.opcode, queues(queue).io.deq.bits.source))
+        SynthesizePrintf(printf(s"Deq queue %d, opcode %d, source %d, address %x\n", queue.U, 
+                                queues(queue).io.deq.bits.opcode, queues(queue).io.deq.bits.source, queues(queue).io.deq.bits.address))
       }
 
       readCntrs(queue) := Mux(enGlobal, queueAcquireActive(queue) + Mux(periodCntrReset, 0.U, readCntrs(queue)), 0.U)
 
       when ( lockDomainQueue(domainIndex) && ( beatingDomainQueue(domainIndex) =/= arbIndex.U ) ) {
-        //SynthesizePrintf(printf(s"Locked domain %d, active domain %d\n", domain.U, beatingDomainQueue))
+        SynthesizePrintf(printf(s"Locked domain %d, active domain %d\n", domainIndex.U, beatingDomainQueue(domainIndex)))
         queues(queue).io.deq.ready := false.B
         arbInput.valid := false.B
       }
 
-      when ( enGlobal && enDomain(queue) ) {
+      when ( enGlobal && enDomain(domainIndex) ) {
         when ( readCntrs(queue) >= maxReads(domainIndex) ) {
           //SynthesizePrintf(printf(s"Throttle domain %d\n", domain.U))
           queues(queue).io.deq.ready := false.B
@@ -232,6 +232,9 @@ class MemCounter(params: BRUParams)(implicit p: Parameters) extends LazyModule
     // need a TLArbiter to connect the domainBanksArbs to, then connect TLArb to out.a
     // use TLArb as it handles multi-beat for us and we don't need to mess with the ready/valid here
     TLArbiter.robin(out_edge, out.a, domainBankArbs.map(arb => arb.io.out):_*)
+    when ( out.a.fire ) {
+      SynthesizePrintf(printf(s"Address %x left arb, domain %d\n", out.a.bits.address, out.a.bits.domainId))
+    }
     //out.a <> domainArbiter.io.out
 
     // when ( domainArbiter.io.out.fire && out.a.fire ) {
