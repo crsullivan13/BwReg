@@ -157,6 +157,7 @@ class MemCounter(params: BRUParams)(implicit p: Parameters) extends LazyModule
 
     for ( domain <- 0 until params.nDomains ) {
       val domainArb = domainBankArbs(domain).io.out
+      val outBank = (domainArb.bits.address >> maskOffset.U) & bankMask.U
 
       val (a_first, a_last, a_done) = out_edge.firstlast(domainArb)
 
@@ -166,8 +167,8 @@ class MemCounter(params: BRUParams)(implicit p: Parameters) extends LazyModule
       // first can be high even if we don't fire, make sure we fire
       when ( a_first && !a_last && domainArb.fire ) {
         lockDomainQueue(domain) := true.B
-        beatingDomainQueue(domain) := selectedBank
-        SynthesizePrintf(printf(s"Domain %d, queue %d locks\n", domain.U, selectedBank))
+        beatingDomainQueue(domain) := outBank
+        SynthesizePrintf(printf(s"Domain %d, queue %d locks\n", domain.U, outBank))
       }
 
       when ( a_done ) {
