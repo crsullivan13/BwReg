@@ -123,17 +123,21 @@ class MemCounter(params: BRUParams)(implicit p: Parameters) extends LazyModule
     val maskOffset = 16
 
     val enGlobal = RegInit(false.B) // CHANGE TO FALSE BEFORE SYNTHESIS
-    // val countInstFetch = RegInit(true.B)
     val periodCntr = Reg(UInt(wPeriod.W))
     val periodLen = Reg(UInt(wPeriod.W))
     val readCntrs = Reg(Vec(queueCount, UInt(w.W)))
     val maxReads = Reg(Vec(params.nDomains, UInt(w.W)))
+
+    val enPerf = RegInit(false.B)
+    val perfReads = Seq.fill(params.nDomains)(Reg(Vec(numBanks, UInt(64.W))))
+    val perfWrites = Seq.fill(params.nDomains)(Reg(Vec(numBanks, UInt(64.W))))
 
     val enDomain = Reg(Vec(params.nDomains, Bool()))
 
     val queues = Seq.fill(params.nDomains)(Seq.fill(numBanks)(Module(new Queue(new TLBundleA(inParams), 128, flow=true))))
     val domainBankArbs = Seq.fill(params.nDomains)(Module(new RRArbiter(new TLBundleA(inParams), 8)))
     val queueAcquireActive = Wire(Vec(queueCount, Bool()))
+    val queuePutActive = Wire(Vec(queueCount, Bool()))
 
     val periodCntrReset = periodCntr >= periodLen
     periodCntr := Mux(periodCntrReset || !enGlobal, 0.U, periodCntr + 1.U)
@@ -183,7 +187,7 @@ class MemCounter(params: BRUParams)(implicit p: Parameters) extends LazyModule
 
         val arbInput = domainBankArbs(domain).io.in(bank)
 
-        // this fills up fast because of multi-beat
+        // this fills up fast because of multi-beat..
         //assert(queues(domain).io.count =/= 24.U)
         when ( queueIO.count === 128.U ) {
           SynthesizePrintf(printf(s"Queue %d is full\n", (domain * bank).U))
@@ -197,6 +201,7 @@ class MemCounter(params: BRUParams)(implicit p: Parameters) extends LazyModule
         arbInput <> queueIO.deq
 
         queueAcquireActive(globalQueNum) := arbInput.fire && arbInput.bits.opcode === TLMessages.Get
+        queuePutActive(globalQueNum) := arbInput.fire && ( arbInput.bits.opcode === TLMessages.PutFullData || arbInput.bits.opcode === TLMessages.PutPartialData)
 
         when ( queueIO.deq.fire ) {
           SynthesizePrintf(printf(s"Deq queue %d, opcode %d, source %d, address %x\n", (globalQueNum).U, 
@@ -204,6 +209,9 @@ class MemCounter(params: BRUParams)(implicit p: Parameters) extends LazyModule
         }
 
         readCntrs(globalQueNum) := Mux(enGlobal, queueAcquireActive(globalQueNum) + Mux(periodCntrReset, 0.U, readCntrs(globalQueNum)), 0.U)
+
+        perfReads(domain)(bank) := Mux(enPerf, queueAcquireActive(globalQueNum) + perfReads(domain)(bank), 0.U)
+        perfWrites(domain)(bank) := Mux(enPerf, queuePutActive(globalQueNum) + perfWrites(domain)(bank), 0.U)
 
         when ( lockDomainQueue(domain) && ( beatingDomainQueue(domain) =/= bank.U ) ) {
           SynthesizePrintf(printf(s"Locked domain %d, active domain %d\n", domain.U, beatingDomainQueue(domain)))
@@ -228,6 +236,8 @@ class MemCounter(params: BRUParams)(implicit p: Parameters) extends LazyModule
       SynthesizePrintf(printf(s"Address %x left arb, domain %d\n", out.a.bits.address, out.a.bits.domainId))
     }
 
+
+    // Assume only 2 Domains
     val enGlobalField = Seq(0 -> Seq(
       RegField(enGlobal.getWidth, enGlobal, RegFieldDesc("enGlobal", "Global Enable"))))
 
@@ -243,8 +253,25 @@ class MemCounter(params: BRUParams)(implicit p: Parameters) extends LazyModule
       (48 + i * 8) -> Seq(RegField(reg.getWidth, reg,
         RegFieldDesc(s"enDomain$i", s"Per-domian reg enable $i"))) }
 
+    val enPerfField = Seq(64 -> Seq(
+      RegField(enPerf.getWidth, enPerf, RegFieldDesc("enPerf", "Perf Enable"))))
+
+    val perfReadFields = perfReads.zipWithIndex.flatMap { case (domain, i) =>
+        domain.zipWithIndex.map { case (bank, j) => 
+          72 + (i * (numBanks * 8)) + (j * 8) -> Seq(RegField(bank.getWidth, bank,
+            RegFieldDesc(s"bankCountR${i}", s"Bank read counter")))  
+        }
+      }
+
+    val perfWriteFields = perfWrites.zipWithIndex.flatMap { case (domain, i) =>
+        domain.zipWithIndex.map { case (bank, j) => 
+          200 + (i * (numBanks * 8)) + (j * 8) -> Seq(RegField(bank.getWidth, bank,
+            RegFieldDesc(s"bankCountR${i}", s"Bank read counter")))  
+        }
+      }
+
     regnode.regmap(enGlobalField ++ periodLenRegField ++
-      maxReadRegFields ++ enDomainRegFields: _*)
+      maxReadRegFields ++ enDomainRegFields ++ enPerfField ++ perfReadFields ++ perfWriteFields: _*)
 
     // println(s"DRAM Reg Clients:")
     // clientNames.foreach( str => println(s"Client: ${str}"))
