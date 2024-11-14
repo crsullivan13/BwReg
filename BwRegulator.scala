@@ -194,14 +194,14 @@ class MemCounter(params: BRUParams)(implicit p: Parameters) extends LazyModule
         }
 
         // when regulation enabled for domain, send request to correct queue
-        // otherwise we bypass the queues
+        // otherwise we bypass the queues.
         queueIO.enq.valid := in.a.valid && (selectedBankAdjusted === (globalQueNum).U)
         queueIO.enq.bits := in.a.bits
 
         arbInput <> queueIO.deq
 
         queueAcquireActive(globalQueNum) := arbInput.fire && arbInput.bits.opcode === TLMessages.Get
-        queuePutActive(globalQueNum) := arbInput.fire && ( arbInput.bits.opcode === TLMessages.PutFullData || arbInput.bits.opcode === TLMessages.PutPartialData)
+        queuePutActive(globalQueNum) := a_done && ( domainArb.bits.opcode === TLMessages.PutFullData || domainArb.bits.opcode === TLMessages.PutPartialData)
 
         when ( queueIO.deq.fire ) {
           SynthesizePrintf(printf(s"Deq queue %d, opcode %d, source %d, address %x\n", (globalQueNum).U, 
@@ -221,7 +221,7 @@ class MemCounter(params: BRUParams)(implicit p: Parameters) extends LazyModule
 
         when ( enGlobal && enDomain(domain) ) {
           when ( readCntrs(globalQueNum) >= maxReads(domain) ) {
-            //SynthesizePrintf(printf(s"Throttle domain %d\n", domain.U))
+            //SynthesizePrintf(printf(s"Throttle domain %d\n", domain.U))...
             queueIO.deq.ready := false.B
             arbInput.valid := false.B
           }
