@@ -135,7 +135,7 @@ class MemCounter(params: BRUParams)(implicit p: Parameters) extends LazyModule
     val enDomain = Reg(Vec(params.nDomains, Bool()))
 
     val queues = Seq.fill(params.nDomains)(Seq.fill(numBanks)(Module(new Queue(new TLBundleA(inParams), 128, flow=true))))
-    val domainBankArbs = Seq.fill(params.nDomains)(Module(new RRArbiter(new TLBundleA(inParams), 8)))
+    val domainBankArbs = Seq.fill(numBanks)(Module(new RRArbiter(new TLBundleA(inParams), params.nDomains)))
     val queueAcquireActive = Wire(Vec(queueCount, Bool()))
     val queuePutActive = Wire(Vec(queueCount, Bool()))
 
@@ -156,39 +156,40 @@ class MemCounter(params: BRUParams)(implicit p: Parameters) extends LazyModule
     in.a.ready := domainReadys(in.a.bits.domainId)
     //in.a.ready := (bypassArbiter.io.in(0.U).ready && !isRegulated) || (selectedQueue && isRegulated)
 
-    val lockDomainQueue = RegInit(VecInit(Seq.fill(params.nDomains)(false.B)))
-    val beatingDomainQueue = RegInit(VecInit(Seq.fill(params.nDomains)(queueCount.U)))
+    val lockDomainQueue = RegInit(VecInit(Seq.fill(numBanks)(false.B)))
+    val beatingDomainQueue = RegInit(VecInit(Seq.fill(numBanks)(params.nDomains.U)))
 
-    for ( domain <- 0 until params.nDomains ) {
-      val domainArb = domainBankArbs(domain).io.out
-      val outBank = (domainArb.bits.address >> maskOffset.U) & bankMask.U
+    for ( bank <- 0 until numBanks ) {
+      val bankArb = domainBankArbs(bank).io.out
+      val outBank = (bankArb.bits.address >> maskOffset.U) & bankMask.U
+      val (a_first, a_last, a_done) = out_edge.firstlast(bankArb)
 
-      val (a_first, a_last, a_done) = out_edge.firstlast(domainArb)
-
-      domainReadys(domain) := MuxLookup(selectedBank, queues(domain)(0).io.enq.ready, (0 until numBanks).map(i => i.U -> queues(domain)(i).io.enq.ready))
-
-      // need a generator loop to handle this stuff for the domains
       // first can be high even if we don't fire, make sure we fire
-      when ( a_first && !a_last && domainArb.fire ) {
-        lockDomainQueue(domain) := true.B
-        beatingDomainQueue(domain) := outBank
-        SynthesizePrintf(printf(s"Domain %d, queue %d locks\n", domain.U, outBank))
+      when ( a_first && !a_last && bankArb.fire ) {
+        lockDomainQueue(bank) := true.B
+        beatingDomainQueue(bank) := bankArb.bits.domainId
+        SynthesizePrintf(printf(s"Domain %d, queue %d locks\n", bankArb.bits.domainId, outBank))
       }
 
       when ( a_done ) {
-        lockDomainQueue(domain) := false.B
-        SynthesizePrintf(printf(s"Domain %d un-locks\n", domain.U))
+        lockDomainQueue(bank) := false.B
+        SynthesizePrintf(printf(s"Domain %d, queue %d un-locks\n", bankArb.bits.domainId, outBank))
       }
+    }
+
+    for ( domain <- 0 until params.nDomains ) {
+
+      domainReadys(domain) := MuxLookup(selectedBank, queues(domain)(0).io.enq.ready, (0 until numBanks).map(i => i.U -> queues(domain)(i).io.enq.ready))
 
       for ( bank <- 0 until numBanks ) {
+        val bankArb = domainBankArbs(bank).io.out
+        val (_, _, a_done) = out_edge.firstlast(bankArb)
 
         val queueIO = queues(domain)(bank).io
         val globalQueNum = bank + (domain * 8)
 
-        val arbInput = domainBankArbs(domain).io.in(bank)
+        val arbInput = domainBankArbs(bank).io.in(domain)
 
-        // this fills up fast because of multi-beat..
-        //assert(queues(domain).io.count =/= 24.U)
         when ( queueIO.count === 128.U ) {
           SynthesizePrintf(printf(s"Queue %d is full\n", (domain * bank).U))
         }
@@ -201,7 +202,7 @@ class MemCounter(params: BRUParams)(implicit p: Parameters) extends LazyModule
         arbInput <> queueIO.deq
 
         queueAcquireActive(globalQueNum) := arbInput.fire && arbInput.bits.opcode === TLMessages.Get
-        queuePutActive(globalQueNum) := a_done && ( domainArb.bits.opcode === TLMessages.PutFullData || domainArb.bits.opcode === TLMessages.PutPartialData)
+        queuePutActive(globalQueNum) := a_done && ( bankArb.bits.opcode === TLMessages.PutFullData || bankArb.bits.opcode === TLMessages.PutPartialData)
 
         when ( queueIO.deq.fire ) {
           SynthesizePrintf(printf(s"Deq queue %d, opcode %d, source %d, address %x\n", (globalQueNum).U, 
@@ -213,8 +214,8 @@ class MemCounter(params: BRUParams)(implicit p: Parameters) extends LazyModule
         perfReads(domain)(bank) := Mux(enPerf, queueAcquireActive(globalQueNum) + perfReads(domain)(bank), 0.U)
         perfWrites(domain)(bank) := Mux(enPerf, queuePutActive(globalQueNum) + perfWrites(domain)(bank), 0.U)
 
-        when ( lockDomainQueue(domain) && ( beatingDomainQueue(domain) =/= bank.U ) ) {
-          SynthesizePrintf(printf(s"Locked domain %d, active domain %d\n", domain.U, beatingDomainQueue(domain)))
+        when ( lockDomainQueue(bank) && ( beatingDomainQueue(bank) =/= domain.U ) ) {
+          SynthesizePrintf(printf(s"Locked queue %d, active domain %d\n", bank.U, beatingDomainQueue(bank)))
           queueIO.deq.ready := false.B
           arbInput.valid := false.B
         }
