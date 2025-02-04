@@ -55,7 +55,7 @@ class MemRegulatorModule(outer: MemRegulator, params: BRUParams) extends LazyMod
 
   val domainIds = Reg(Vec(nClients, UInt(log2Ceil(params.nDomains).W)))
 
-  // No domain generator, handled in counter module
+  // No domain generator, handled in counter module..
 
   // Generator for client edges
   for ( i <- 0 until nClients ) {
@@ -67,14 +67,14 @@ class MemRegulatorModule(outer: MemRegulator, params: BRUParams) extends LazyMod
     out.c.bits.domainId := domainIds(i)
 
     when ( out.a.fire ) {
-      SynthesizePrintf(printf(s"ChanA Core %d, opcode %d, address %x\n", i.U, out.a.bits.opcode, out.a.bits.address))
+      //SynthesizePrintf(printf(s"ChanA Core %d, opcode %d, address %x\n", i.U, out.a.bits.opcode, out.a.bits.address))
     }
 
     when ( out.c.fire ) {
-      SynthesizePrintf(printf(s"ChanC Core %d, opcode %d, address %x\n", i.U, out.c.bits.opcode, out.c.bits.address))
+      //SynthesizePrintf(printf(s"ChanC Core %d, opcode %d, address %x\n", i.U, out.c.bits.opcode, out.c.bits.address))
     }
 
-    // only support cores for the moment
+    // only support cores for the moment.
     clientNames(i) = in_edge.client.clients(0).name
   }
 
@@ -114,7 +114,7 @@ class MemCounter(params: BRUParams)(implicit p: Parameters) extends LazyModule
     val memBase = p(ExtMem).get.master.base.U
     val wPeriod = 25 // for max 33.5ms period, F = 1GHz
     val w = wPeriod - 3 // it can count up to a transaction per 8 cycles when window size is set to max
-    // val clientNames = new Array[String](nClients)
+    // val clientNames = new Array[String](nClients)..
 
     val numBanks = 8
     val queueCount = numBanks * params.nDomains
@@ -144,8 +144,8 @@ class MemCounter(params: BRUParams)(implicit p: Parameters) extends LazyModule
 
     // set some stuff for metasim debug, REMOVE BEFORE SYNTHESIS
     // enDomain(0.U) := true.B
-    // maxReads(0.U) := 3.U
-    // enDomain(1.U) := true.B
+    // maxReads(0.U) := 3.U..
+    // enDomain(1.U) := true.B..
     // maxReads(1.U) := 3.U
     // periodLen := 200.U
 
@@ -154,7 +154,7 @@ class MemCounter(params: BRUParams)(implicit p: Parameters) extends LazyModule
     val domainReadys = Reg(Vec(params.nDomains, Bool()))
     //val isRegulated = enGlobal && enDomain(in.a.bits.domainId)
     in.a.ready := domainReadys(in.a.bits.domainId)
-    //in.a.ready := (bypassArbiter.io.in(0.U).ready && !isRegulated) || (selectedQueue && isRegulated)
+    //in.a.ready := (bypassArbiter.io.in(0.U).ready && !isRegulated) || (selectedQueue && isRegulated)..
 
     val lockDomainQueue = RegInit(VecInit(Seq.fill(params.nDomains)(false.B)))
     val beatingDomainQueue = RegInit(VecInit(Seq.fill(params.nDomains)(queueCount.U)))
@@ -187,7 +187,7 @@ class MemCounter(params: BRUParams)(implicit p: Parameters) extends LazyModule
 
         val arbInput = domainBankArbs(domain).io.in(bank)
 
-        // this fills up fast because of multi-beat..
+        // this fills up fast because of multi-beat.
         //assert(queues(domain).io.count =/= 24.U)
         when ( queueIO.count === 128.U ) {
           SynthesizePrintf(printf(s"Queue %d is full\n", (domain * bank).U))
@@ -221,7 +221,7 @@ class MemCounter(params: BRUParams)(implicit p: Parameters) extends LazyModule
 
         when ( enGlobal && enDomain(domain) ) {
           when ( readCntrs(globalQueNum) >= maxReads(domain) ) {
-            //SynthesizePrintf(printf(s"Throttle domain %d\n", domain.U))...
+            //SynthesizePrintf(printf(s"Throttle domain %d\n", domain.U))......
             queueIO.deq.ready := false.B
             arbInput.valid := false.B
           }
@@ -356,7 +356,7 @@ class BwRegulatorModule(outer: BwRegulator, params: BRUParams) extends LazyModul
   for (i <- 0 until params.nDomains) {
 
     for (j <- 0 until nBanks) {
-      // bit vectors for clients that are enabled & access mem in the current cycle & are assigned to domain i & are in accssessing bank j
+      // bit vectors for clients that are enabled & access mem in the current cycle & are assigned to domain i & are in accssessing bank j..
       val clientAcquireActBankMasked = (domainIds zip (coreAcquireActive zip doesAccessBank)).map { case (d, (act, bank)) => d === i.U && act && bank(j) }
       val clientPutActBankMasked = (domainIds zip (corePutActive zip doesAccessBank)).map { case (d, (act, bank)) => d === i.U && act && bank(j) }
 
