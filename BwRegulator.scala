@@ -38,6 +38,7 @@ class BwRegulatorModule(outer: BwRegulator) extends LazyModuleImp(outer)
 
   val nDomains = 4
   val numDramBanks = 8
+  val numCacheBanks = 2
   val dramBankBitOffset = 16
   val dramBankMask = numDramBanks - 1
 
@@ -72,7 +73,7 @@ class BwRegulatorModule(outer: BwRegulator) extends LazyModuleImp(outer)
       val isAcquire = in.a.bits.opcode === TLMessages.AcquireBlock
       val isInstrFetch = in.a.bits.opcode === TLMessages.Get && in.a.bits.address >= memBase
 
-      val isAccessRead = isAcquire || ( countInstrFetch && isInstrFetch )
+      val isAccessRead = isAcquire || isInstrFetch
 
       doesClientFireAcquire(i) := isAccessRead && in.a.fire && clientRegEnable(i)
 
@@ -83,7 +84,7 @@ class BwRegulatorModule(outer: BwRegulator) extends LazyModuleImp(outer)
         doesClientAccessBank(i)(j) := ( ( in.a.bits.address >> dramBankBitOffset.U ) & dramBankMask.U ) === j.U
       }
 
-      for ( j <- 0 until numBanks ) {
+      for ( j <- 0 until numCacheBanks ) {
         throttleIO(i).nThrottle(j) := false.B
       }
 
