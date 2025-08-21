@@ -37,7 +37,6 @@ class BwRegulatorModule(outer: BwRegulator) extends LazyModuleImp(outer)
   val throttleIO = outer.ioNode.map(_.bundle)
 
   val nDomains = 4
-  val numDramBanks = 8
   val numCacheBanks = 2
   val dramBankBitOffset = 16
   val dramBankMask = numDramBanks - 1
@@ -54,13 +53,10 @@ class BwRegulatorModule(outer: BwRegulator) extends LazyModuleImp(outer)
   val clientDomainIds = Reg(Vec(nClients, UInt(log2Ceil(nDomains).W))) // which domain is a client in
 
   val doesClientFireAcquire = Wire(Vec(nClients, Bool()))
-  val doesClientAccessBank = Seq.fill(nClients)(Wire(Vec(numDramBanks, Bool())))
 
   for ( i <- 0 until nDomains ) {
-    for ( j <- 0 until numDramBanks ) {
-        val clientDomainActive = ( clientDomainIds zip ( doesClientFireAcquire zip doesClientAccessBank ) ).map {
-            case (domain, (active, bank)) => domain === i.U && active && bank(j)
-        }
+    val clientDomainActive = ( clientDomainIds zip doesClientFireAcquire ).map {
+        case (domain, active) => domain === i.U && active
     }
   }
 
@@ -80,21 +76,15 @@ class BwRegulatorModule(outer: BwRegulator) extends LazyModuleImp(outer)
       out.a.bits.domainId := clientDomainIds(i)
       out.c.bits.domainId := clientDomainIds(i)
 
-      for ( j <- 0 until numDramBanks ) {
-        doesClientAccessBank(i)(j) := ( ( in.a.bits.address >> dramBankBitOffset.U ) & dramBankMask.U ) === j.U
-      }
-
       for ( j <- 0 until numCacheBanks ) {
         throttleIO(i).nThrottle(j) := false.B
       }
 
       when ( clientRegEnable(i) && globalEnable ) {
-          for ( j <- 0 until numDramBanks ) {
-              when ( doesClientAccessBank(i)(j) && isAccessRead && outer.dramRegNode.bundle.nThrottle(clientDomainIds(i)) ) {
-                  in.a.ready := false.B
-                  out.a.valid := false.B
-              }
-          }
+        when ( isAccessRead && outer.dramRegNode.bundle.nThrottle(clientDomainIds(i)) ) {
+            in.a.ready := false.B
+            out.a.valid := false.B
+        }
       }
     }
 
