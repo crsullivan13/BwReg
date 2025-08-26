@@ -37,6 +37,7 @@ class BwRegulatorModule(outer: BwRegulator) extends LazyModuleImp(outer)
   val throttleIO = outer.ioNode.map(_.bundle)
 
   val nDomains = 4
+  val numDramBanks = 8
   val numCacheBanks = 2
   val dramBankBitOffset = 16
   val dramBankMask = numDramBanks - 1
