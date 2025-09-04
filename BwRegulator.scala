@@ -9,7 +9,7 @@ import freechips.rocketchip.regmapper._
 //import midas.targetutils.SynthesizePrintf
 import org.chipsalliance.cde.config.{Parameters, Field, Config}
 
-import freechips.rocketchip.tile.BRUTileIO
+import freechips.rocketchip.tile.{BRUTileIO, BRUTileAccessIO}
 
 // BRUTileIO defined in BaseTile.scala so we have it everywhere
 
@@ -21,6 +21,7 @@ class BwRegulator()(implicit p: Parameters) extends LazyModule
     // TODO: Can we grab the number of cores from params somehow?
     val ioNode = Seq.fill(4)(BundleBridgeSource(() => new BRUTileIO(p(SubsystemBankedCoherenceKey).nBanks)))
     val dramRegNode = BundleBridgeSink[BRUTileIO](Some(() => Flipped(new BRUTileIO(4))))
+    val coreAccessNode = Seq.fill(4)(BundleBridgeSink[BRUTileAccessIO](Some(() => Flipped(new BRUTileAccessIO(p(SubsystemBankedCoherenceKey).nBanks)))))
     val adapterNode = TLAdapterNode()
 
     // add simple config registers
