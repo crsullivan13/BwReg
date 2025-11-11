@@ -9,7 +9,7 @@ import freechips.rocketchip.regmapper._
 //import midas.targetutils.SynthesizePrintf
 import org.chipsalliance.cde.config.{Parameters, Field, Config}
 
-import freechips.rocketchip.tile.{BRUTileIO, BRUTileAccessIO}
+import freechips.rocketchip.tile.{BRUTileIO, BRUTileAccessIO, BRUPerBankTileIO}
 
 // BRUTileIO defined in BaseTile.scala so we have it everywhere
 
@@ -17,10 +17,10 @@ class BwRegulator()(implicit p: Parameters) extends LazyModule
 {
     val device = new SimpleDevice("bru",Seq("bru"))
 
-    // first number is number of cores, second is number of banks..
-    // TODO: Can we grab the number of cores from params somehow?..
+    // first number is number of cores, second is number of banks
+    // TODO: Can we grab the number of cores from params somehow?
     val ioNode = Seq.fill(4)(BundleBridgeSource(() => new BRUTileIO(p(SubsystemBankedCoherenceKey).nBanks)))
-    val dramRegNode = BundleBridgeSink[BRUTileIO](Some(() => Flipped(new BRUTileIO(4))))
+    val dramRegNode = BundleBridgeSink[BRUPerBankTileIO](Some(() => Flipped(new BRUPerBankTileIO(4, 8))))
     val coreAccessNode = Seq.fill(4)(BundleBridgeSink[BRUTileAccessIO](Some(() => Flipped(new BRUTileAccessIO(p(SubsystemBankedCoherenceKey).nBanks)))))
     val adapterNode = TLAdapterNode()
 
@@ -89,9 +89,10 @@ class BwRegulatorModule(outer: BwRegulator) extends LazyModuleImp(outer)
         throttleIO(i).nThrottle(j) := false.B
       }
 
+      val domainThrottle = outer.dramRegNode.bundle.nThrottle(clientDomainIds(i))
       when ( clientRegEnable(i) && globalEnable ) {
           for ( j <- 0 until numDramBanks ) {
-              when ( doesClientAccessBank(i)(j) && isAccessRead && outer.dramRegNode.bundle.nThrottle(clientDomainIds(i)) ) {
+              when ( doesClientAccessBank(i)(j) && isAccessRead && domainThrottle(j) ) {
                   in.a.ready := false.B
                   out.a.valid := false.B
               }
