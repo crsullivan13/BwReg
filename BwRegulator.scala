@@ -13,34 +13,45 @@ import freechips.rocketchip.tile.{BRUTileIO, BRUTileAccessIO, BRUPerBankTileIO}
 
 // BRUTileIO defined in BaseTile.scala so we have it everywhere
 
-class BwRegulator()(implicit p: Parameters) extends LazyModule
+case class BRUParams (
+  address: BigInt,
+  nDomains: Int,
+  withMonitor: Boolean, // does nothing on this branch
+  nDramBanks: Int,
+  dramBankOffset: Int
+)
+
+case object BRUKey extends Field[Option[BRUParams]](None)
+
+class BwRegulator(params: BRUParams)(implicit p: Parameters) extends LazyModule
 {
     val device = new SimpleDevice("bru",Seq("bru"))
 
     // first number is number of cores, second is number of banks
     // TODO: Can we grab the number of cores from params somehow?
-    val ioNode = Seq.fill(4)(BundleBridgeSource(() => new BRUTileIO(p(SubsystemBankedCoherenceKey).nBanks)))
-    val dramRegNode = BundleBridgeSink[BRUPerBankTileIO](Some(() => Flipped(new BRUPerBankTileIO(4, 8))))
-    val coreAccessNode = Seq.fill(4)(BundleBridgeSink[BRUTileAccessIO](Some(() => Flipped(new BRUTileAccessIO(p(SubsystemBankedCoherenceKey).nBanks)))))
+    // for now assume number of cores == nDomains
+    val ioNode = Seq.fill(params.nDomains)(BundleBridgeSource(() => new BRUTileIO(p(SubsystemBankedCoherenceKey).nBanks)))
+    val dramRegNode = BundleBridgeSink[BRUPerBankTileIO](Some(() => Flipped(new BRUPerBankTileIO(params.nDomains, params.nDramBanks))))
+    // val coreAccessNode = Seq.fill(4)(BundleBridgeSink[BRUTileAccessIO](Some(() => Flipped(new BRUTileAccessIO(p(SubsystemBankedCoherenceKey).nBanks)))))
     val adapterNode = TLAdapterNode()
 
     // add simple config registers
     val regnode = new TLRegisterNode(
-        address = Seq(AddressSet(0x20000000, 0x7ff)),
+        address = Seq(AddressSet(params.address, 0x7ff)),
         device = device,
         beatBytes = 8)
 
-    lazy val module = new BwRegulatorModule(this)
+    lazy val module = new BwRegulatorModule(this, params)
 }
 
-class BwRegulatorModule(outer: BwRegulator) extends LazyModuleImp(outer)
+class BwRegulatorModule(outer: BwRegulator, params: BRUParams) extends LazyModuleImp(outer)
 {
   val throttleIO = outer.ioNode.map(_.bundle)
 
-  val nDomains = 4
-  val numDramBanks = 8
-  val numCacheBanks = 2
-  val dramBankBitOffset = 16
+  val nDomains = params.nDomains
+  val numDramBanks = params.nDramBanks
+  val numCacheBanks = p(SubsystemBankedCoherenceKey).nBanks
+  val dramBankOffset = params.dramBankOffset
   val dramBankMask = numDramBanks - 1
 
   val memBase = p(ExtMem).get.master.base.U
@@ -82,7 +93,7 @@ class BwRegulatorModule(outer: BwRegulator) extends LazyModuleImp(outer)
       out.c.bits.domainId := clientDomainIds(i)
 
       for ( j <- 0 until numDramBanks ) {
-        doesClientAccessBank(i)(j) := ( ( in.a.bits.address >> dramBankBitOffset.U ) & dramBankMask.U ) === j.U
+        doesClientAccessBank(i)(j) := ( ( in.a.bits.address >> dramBankOffset.U ) & dramBankMask.U ) === j.U
       }
 
       for ( j <- 0 until numCacheBanks ) {
@@ -131,3 +142,7 @@ trait CanHaveBRU { this: BaseSubsystem =>
         }
     }
 }
+
+class WithBRU(address: BigInt = 0x20000000L, nDomains: Int = 4, withMonitor: Boolean = false, nDramBanks: Int = 8, dramBankOffset: Int = 16) extends Config((_, _, _) => {
+  case BRUKey => Some(BRUParams(address = address, nDomains = nDomains, withMonitor = withMonitor, nDramBanks = nDramBanks, dramBankOffset = dramBankOffset))
+})
