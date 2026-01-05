@@ -10,45 +10,47 @@ import org.chipsalliance.cde.config.{Parameters, Field, Config}
 
 import freechips.rocketchip.tile.{BRUTileIO, BRUTileAccessIO}
 
-// case class BRUParams (
-//   address: BigInt,
-//   nDomains: Int,
-//   withMonitor: Boolean  // avoid including this when using multiple mempress, too many edges and the regmap gets too large
-// )
+case class BRUParams (
+  address: BigInt,
+  nDomains: Int,
+  withMonitor: Boolean
+)
 
-//case object BRUKey extends Field[Option[BRUParams]](None)
+case object BRUKey extends Field[Option[BRUParams]](None)
 
-class BwRegulator() (implicit p: Parameters) extends LazyModule
+class BwRegulator(params: BRUParams) (implicit p: Parameters) extends LazyModule
 {
   val device = new SimpleDevice("bru",Seq("bru"))
 
   val regnode = new TLRegisterNode(
-    address = Seq(AddressSet(0x20000000, 0x7ff)),
+    address = Seq(AddressSet(params.address, 0x7ff)),
     device = device,
     beatBytes = 8)
 
   val adapterNode = TLAdapterNode()
-  val ioNode = Seq.fill(4)(BundleBridgeSource(() => new BRUTileIO(p(SubsystemBankedCoherenceKey).nBanks)))
-  val coreAccessNode = Seq.fill(4)(BundleBridgeSink[BRUTileAccessIO](Some(() => Flipped(new BRUTileAccessIO(p(SubsystemBankedCoherenceKey).nBanks)))))
-  lazy val module = new BwRegulatorModule(this)
+  // NOTE: we currently assume that nDomains == number of cores
+  // if you decide to stray from this, change params.nDomains below to be equal to number of cores
+  val ioNode = Seq.fill(params.nDomains)(BundleBridgeSource(() => new BRUTileIO(p(SubsystemBankedCoherenceKey).nBanks)))
+  // val coreAccessNode = Seq.fill(4)(BundleBridgeSink[BRUTileAccessIO](Some(() => Flipped(new BRUTileAccessIO(p(SubsystemBankedCoherenceKey).nBanks)))))
+  lazy val module = new BwRegulatorModule(this, params)
 }
 
-class BwRegulatorModule(outer: BwRegulator) extends LazyModuleImp(outer)
+class BwRegulatorModule(outer: BwRegulator, params: BRUParams) extends LazyModuleImp(outer)
 {
   // A TLAdapterNode has equal number of input and output edges
   val n = outer.adapterNode.in.length
   println(s"Number of edges into BRU: $n")
 
-  val nDomains = 4
+  val nDomains = params.nDomains
   require(nDomains <= 32) //Limit for regmapper addresses
 
-  val withMonitor = false
+  val withMonitor = params.withMonitor
 
   val nBanks = p(SubsystemBankedCoherenceKey).nBanks
   val numBankBits = log2Ceil(nBanks)
 
   val throttleIO = outer.ioNode.map(_.bundle)
-  val accessIO = outer.coreAccessNode.map(_.bundle)
+  // val accessIO = outer.coreAccessNode.map(_.bundle)
 
   val memBase = p(ExtMem).get.master.base.U
   val wPeriod = 25 // for max 33.5ms period, F = 1GHz
@@ -245,6 +247,10 @@ trait CanHaveBRU { this: BaseSubsystem =>
     }
 }
 
+class WithBRU(address: BigInt = 0x20000000L, nDomains: Int = 4, withMonitor: Boolean = false) extends Config((_, _, _) => {
+  case BRUKey => Some(BRUParams(address = address, nDomains = nDomains, withMonitor = withMonitor))
+})
+
 // MMIO map examples (nDomains=4, n=4, base 0x00, 8-byte stride):
 // Core regs:
 //   enBRUGlobal=0x00, countInstrFetch=0x08, periodLen=0x10
@@ -254,23 +260,4 @@ trait CanHaveBRU { this: BaseSubsystem =>
 //   nBanks=2: bankCountR[0..7]=0x88..0xC0, bankCountW[0..7]=0xC8..0x100
 //   nBanks=4: bankCountR[0..15]=0x88..0x100, bankCountW[0..15]=0x108..0x180
 
-// trait CanHavePeripheryBRU { this: BaseSubsystem =>
-//   private val portName = "llc-bru"
 
-//   val BwRegulator = p(BRUKey) match {
-//     case Some(params) => {
-//       val BwRegulator = LazyModule(new BwRegulator(params, "llc")(p))
-
-//       pbus.coupleTo(portName) { 
-//         BwRegulator.regnode := 
-//         TLFragmenter(pbus.beatBytes, pbus.blockBytes) := _ }
-
-//       Some(BwRegulator)
-//     }
-//     case None => None
-//   }
-// }
-
-// class WithBRU(address: BigInt = 0x20000000L, nDomains: Int = 4, withMonitor: Boolean = false) extends Config((_, _, _) => {
-//   case BRUKey => Some(BRUParams(address = address, nDomains = nDomains, withMonitor = withMonitor))
-// })
