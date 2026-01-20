@@ -259,5 +259,3 @@ class WithBRU(address: BigInt = 0x20000000L, nDomains: Int = 4, withMonitor: Boo
 // Counters (withMonitor=true):
 //   nBanks=2: bankCountR[0..7]=0x88..0xC0, bankCountW[0..7]=0xC8..0x100
 //   nBanks=4: bankCountR[0..15]=0x88..0x100, bankCountW[0..15]=0x108..0x180
-
-
