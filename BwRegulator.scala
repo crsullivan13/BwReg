@@ -368,12 +368,20 @@ class BwRegulatorModule(outer: BwRegulator, params: BRUParams) extends LazyModul
   val bc_bw_alloc_hi32 = RegField.r(32, bc_bw_alloc_u64(63,32),
     RegFieldDesc("bc_bw_alloc_hi32", "Reserved bits of bc_bw_alloc"))
 
+  val global_enable = RegField(enBRUGlobal.getWidth, enBRUGlobal,
+    RegFieldDesc("enBRUGlobal", "Custom global regulator enable"))
+
+  val period_length = RegField(periodLen.getWidth, periodLen,
+    RegFieldDesc("periodLen", "Custom period length control"))
+
   val regmap = outer.regnode.regmap(
     0x000 -> RegFieldGroup("bc_capabilities", Some("4.1. Bandwidth-controller Capabilities"), Seq(bc_capabilities_lo32, bc_capabilities_hi32)),
     0x008 -> RegFieldGroup("bc_mon_ctl", Some("4.2. Bandwidth Usage Monitoring Control"), Seq(bc_mon_ctl_lo32, bc_mon_ctl_hi32)),
     0x010 -> RegFieldGroup("bc_mon_ctr", Some("4.3. Bandwidth Monitoring Counter Value"), Seq(bc_mon_ctr_lo32, bc_mon_ctr_hi32)),
     0x018 -> RegFieldGroup("bc_alloc_ctl", Some("4.4. Bandwidth Allocation Control"), Seq(bc_alloc_ctl_lo32, bc_alloc_ctl_hi32)),
-    0x020 -> RegFieldGroup("bc_bw_alloc", Some("4.5. Bandwidth Allocation Configuration"), Seq(bc_bw_alloc_lo32, bc_bw_alloc_hi32))
+    0x020 -> RegFieldGroup("bc_bw_alloc", Some("4.5. Bandwidth Allocation Configuration"), Seq(bc_bw_alloc_lo32, bc_bw_alloc_hi32)),
+    0x100 -> Seq(global_enable),
+    0x108 -> Seq(period_length)
   )
 
   println("Bandwidth regulation (BRU):")
