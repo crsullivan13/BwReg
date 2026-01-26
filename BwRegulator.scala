@@ -96,7 +96,6 @@ class BwRegulatorModule(outer: BwRegulator, params: BRUParams) extends LazyModul
   val periodLen = Reg(UInt(wPeriod.W))
   val bankReadCntrs = Seq.fill(nRCID)(RegInit(VecInit(Seq.fill(nBanks)(0.U(w.W)))))
   val maxReads = Reg(Vec(nRCID, UInt(w.W)))
-  val clientRegEnable = Reg(Vec(n, Bool()))
   val coreAcquireActive = Wire(Vec(n, Bool()))
   val coreAcquireRCID = Wire(Vec(n, UInt(log2Ceil(nRCID).W)))
   val doesAccessBank = Seq.fill(n)(Wire(Vec(nBanks, Bool())))
@@ -182,7 +181,7 @@ class BwRegulatorModule(outer: BwRegulator, params: BRUParams) extends LazyModul
 
   def handleBcAllocCtl(op: UInt, at: UInt, rcid: UInt): Unit = {
     val opEnum = op.asTypeOf(BcAllocCtlOp())
-    val opValid = (opEnum === BcAllocCtlOp.CONFIG_LIMIT) || (opEnum === BcAllocCtlOp.READ_LIMIT)
+    val opValid = ( opEnum === BcAllocCtlOp.CONFIG_LIMIT ) || ( opEnum === BcAllocCtlOp.READ_LIMIT )
     val rcidValid = rcid >= nRCID.U
 
     bc_alloc_ctl_op := opEnum
@@ -260,8 +259,8 @@ class BwRegulatorModule(outer: BwRegulator, params: BRUParams) extends LazyModul
   periodCntr := Mux(periodCntrReset || !enBRUGlobal, 0.U, periodCntr + 1.U)
 
   // generator loop for domains
-  for (i <- 0 until nRCID) {
-    for (j <- 0 until nBanks) {
+  for ( i <- 0 until nRCID ) {
+    for ( j <- 0 until nBanks ) {
       // bit vectors for clients that are enabled & access mem in the current cycle & are assigned to domain i & are in accssessing bank j
       val clientAcquireActBankMasked = (coreAcquireRCID zip (coreAcquireActive zip doesAccessBank)).map { 
         case (rcid, (act, bank)) => rcid === i.U && act && bank(j) 
@@ -277,7 +276,7 @@ class BwRegulatorModule(outer: BwRegulator, params: BRUParams) extends LazyModul
   }
 
   //generator loop for client edges
-  for (i <- 0 until n) {
+  for ( i <- 0 until n ) {
     val (out, edge_out) = outer.adapterNode.out(i)
     val (in, edge_in) = outer.adapterNode.in(i)
 
@@ -285,16 +284,16 @@ class BwRegulatorModule(outer: BwRegulator, params: BRUParams) extends LazyModul
     val aIsInstFetch = in.a.bits.opcode === TLMessages.Get && in.a.bits.address >= memBase
     val cIsWb = in.c.bits.opcode === TLMessages.ReleaseData || in.c.bits.opcode === TLMessages.ProbeAckData
 
-    val aIsRead = aIsAcquire || (aIsInstFetch && countInstFetch)
+    val aIsRead = aIsAcquire || ( aIsInstFetch && countInstFetch )
 
-    coreAcquireActive(i) := clientRegEnable(i) && in.a.fire && aIsRead
+    coreAcquireActive(i) := in.a.fire && aIsRead
     coreAcquireRCID(i) := in.a.bits.rcid
 
     //per bank support
     //do we access bank j
     val bankBits = Wire(UInt(nBanks.W))
     bankBits := in.a.bits.address(6+numBankBits-1, 6) // Can we make 6 (cache line boundary) not a magic number?
-    for (j <- 0 until nBanks) {
+    for ( j <- 0 until nBanks ) {
       doesAccessBank(i)(j) := bankBits === j.U
 
       aCounters match {
@@ -314,11 +313,11 @@ class BwRegulatorModule(outer: BwRegulator, params: BRUParams) extends LazyModul
     out <> in
 
     for ( j <- 0 until nBanks ) {
-        //throttleIO(i).nThrottle(j) := throttleWriteDomainBanks(clientDomainIds(i))(j) && clientRegEnable(i) && enBRUGlobal
+        //throttleIO(i).nThrottle(j) := throttleWriteDomainBanks(clientDomainIds(i))(j) && enBRUGlobal
         throttleIO(i).nThrottle(j) := false.B
     }
 
-    when (enBRUGlobal && clientRegEnable(i)) {
+    when ( enBRUGlobal ) {
       for (j <- 0 until nBanks ) {
         when ( ( throttleReadDomainBanks(coreAcquireRCID(i))(j) && doesAccessBank(i)(j) ) && aIsRead ) {
            out.a.valid := false.B
