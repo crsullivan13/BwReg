@@ -18,9 +18,26 @@ object BcAllocCtlStatus extends ChiselEnum {
   val INVALID_BWB  = Value(5.U) // invalid or unsupported reserved bandwidth block
 }
 
-object BcAllocCtlOp extends ChiselEnum {
-  val CONFIG_LIMIT = Value(1.U)
-  val READ_LIMIT   = Value(2.U)
+object BcMonCtlStatus extends ChiselEnum {
+  val OK               = Value(1.U)
+  val INVALID_OP       = Value(2.U)
+  val INVALID_MCID     = Value(3.U)
+  val INVALID_EVT_ID   = Value(4.U)
+  val INVALID_AT       = Value(5.U)
+}
+
+object BcMonCtlEvent extends ChiselEnum {
+  val NONE             = Value(0.U)
+  val READ_WRITE       = Value(1.U)
+  val READ_ONLY        = Value(2.U)
+  val WRITE_ONLY       = Value(3.U)
+
+  val CUSTOM           = Value(256.U)
+}
+
+object BcCtlOp extends ChiselEnum {
+  val CONFIG = Value(1.U)
+  val READ   = Value(2.U)
 
   val CUSTOM       = Value(31.U) // force this type to be 5 bits wide, this is dumb
 }
@@ -98,8 +115,14 @@ class BwRegulatorModule(outer: BwRegulator, params: BRUParams) extends LazyModul
   val maxReads = Reg(Vec(nRCID, UInt(w.W)))
   val coreAcquireActive = Wire(Vec(n, Bool()))
   val coreAcquireRCID = Wire(Vec(n, UInt(log2Ceil(nRCID).W)))
+  val coreAcquireMCID = Wire(Vec(n, UInt(log2Ceil(nMCID).W)))
   val doesAccessBank = Seq.fill(n)(Wire(Vec(nBanks, Bool())))
   val throttleReadDomainBanks = RegInit(VecInit(Seq.fill(nRCID)(VecInit(Seq.fill(nBanks)(false.B)))))
+
+  val mcidCounters = RegInit(VecInit(Seq.fill(nMCID)(0.U(62.W))))
+  val mcidEvts = RegInit(VecInit(Seq.fill(nMCID)(BcMonCtlEvent.NONE)))
+  val s_mcid_hold :: s_mcid_count :: s_mcid_reset :: Nil = Enum(3)
+  val mcidStates = RegInit(VecInit(Seq.fill(nMCID)(s_mcid_hold)))
 
   val bc_capabilities = WireDefault(0.U.asTypeOf(new CapabilitiesBundle))
   bc_capabilities.ver := params.ver.U
@@ -117,35 +140,69 @@ class BwRegulatorModule(outer: BwRegulator, params: BRUParams) extends LazyModul
     bc_capabilities.nbwblks,
     bc_capabilities.ver)
 
-  val bc_mon_ctl_op = RegInit(0.U(5.W))                 // [4:0]
+  val bc_mon_ctl_op = RegInit(BcCtlOp.READ)             // [4:0]
   val bc_mon_ctl_at = RegInit(0.U(3.W))                 // [7:5]
   val bc_mon_ctl_mcid = RegInit(0.U(12.W))              // [19:8]
-  val bc_mon_ctl_evtid = RegInit(0.U(8.W))              // [27:20]
+  val bc_mon_ctl_evtid = RegInit(BcMonCtlEvent.NONE)    // [27:20]
   val bc_mon_ctl_atv = RegInit(false.B)                 // [28]
   val bc_mon_ctl_reserved_1 = WireDefault(0.U(3.W))     // [31:29]
-  val bc_mon_ctl_status = RegInit(0.U(7.W))             // [38:32]
+  val bc_mon_ctl_status = RegInit(BcMonCtlStatus.OK)    // [38:32]
   val bc_mon_ctl_busy = RegInit(false.B)                // [39]
   val bc_mon_ctl_reserved_2 = WireDefault(0.U(24.W))    // [63:40]
 
   val bc_mon_ctl_u64 = Cat(bc_mon_ctl_reserved_2,
     bc_mon_ctl_busy,
-    bc_mon_ctl_status,
+    bc_mon_ctl_status.asUInt.pad(7),
     bc_mon_ctl_reserved_1,
     bc_mon_ctl_atv,
-    bc_mon_ctl_evtid,
+    bc_mon_ctl_evtid.asUInt.pad(8),
     bc_mon_ctl_mcid,
     bc_mon_ctl_at,
-    bc_mon_ctl_op)
+    bc_mon_ctl_op.asUInt.pad(5))
+
+  def handleBcMonCtl(op: UInt, mcid: UInt, evt_id: UInt): Unit = {
+    val opEnum = op.asTypeOf(BcCtlOp())
+    val opValid = ( opEnum === BcCtlOp.CONFIG ) || ( opEnum === BcCtlOp.READ )
+    val evtEnum = evt_id.asTypeOf(BcMonCtlEvent())
+    val evtValid = ( evtEnum === BcMonCtlEvent.NONE ) || ( evtEnum === BcMonCtlEvent.READ_WRITE ) ||
+                   ( evtEnum === BcMonCtlEvent.READ_ONLY ) || ( evtEnum === BcMonCtlEvent.WRITE_ONLY )
+    val mcidValid = mcid < nMCID.U
+
+    bc_mon_ctl_op := opEnum
+    bc_mon_ctl_evtid := evtEnum
+    bc_mon_ctl_mcid := mcid
+
+    when ( opValid && mcidValid && evtValid ) {
+      switch ( opEnum ) {
+        is ( BcCtlOp.CONFIG ) {
+          when ( evtEnum =/= BcMonCtlEvent.NONE ) {
+            mcidStates(mcid) := s_mcid_reset
+          } .otherwise {
+            mcidStates(mcid) := s_mcid_hold
+          }
+          mcidEvts(mcid) := evtEnum
+          bc_mon_ctl_status := BcMonCtlStatus.OK
+        }
+        is ( BcCtlOp.READ ) {
+          bc_mon_ctr_val := mcidCounters(mcid)
+          bc_mon_ctl_status := BcMonCtlStatus.OK
+        }
+      }
+    } .elsewhen ( !mcidValid ) {
+      bc_mon_ctl_status := BcMonCtlStatus.INVALID_MCID
+    } .elsewhen ( !evtValid ) {
+      bc_mon_ctl_status := BcMonCtlStatus.INVALID_EVT_ID
+    }.otherwise {
+      bc_mon_ctl_status := BcMonCtlStatus.INVALID_OP
+    }
+  }
 
   def writeBcMonCtl(valid: Bool, data: UInt): Bool = {
     when ( valid && !bc_mon_ctl_busy ) {
-      bc_mon_ctl_op := data(4,0)
-      bc_mon_ctl_at := data(7,5)
-      bc_mon_ctl_mcid := data(19,8)
-      bc_mon_ctl_evtid := data(27,20)
-      bc_mon_ctl_atv := data(28)
+      handleBcMonCtl(data(4,0), data(19,8), data(27,20))
+      // bc_mon_ctl_at := data(7,5)
+      // bc_mon_ctl_atv := data(28)
       // bc_mon_ctl_busy := true.B
-      bc_mon_ctl_status := 0.U 
     }
 
     !bc_mon_ctl_busy
@@ -163,7 +220,7 @@ class BwRegulatorModule(outer: BwRegulator, params: BRUParams) extends LazyModul
     bc_mon_ctr_inv,
     bc_mon_ctr_val)
 
-  val bc_alloc_ctl_op = RegInit(BcAllocCtlOp.READ_LIMIT)          // [4:0]
+  val bc_alloc_ctl_op = RegInit(BcCtlOp.READ)          // [4:0]
   val bc_alloc_ctl_at = RegInit(0.U(3.W))                         // [7:5]
   val bc_alloc_ctl_rcid = RegInit(0.U(12.W))                      // [19:8]
   val bc_alloc_ctl_reserved_1 = WireDefault(0.U(12.W))            // [31:20] 
@@ -180,21 +237,21 @@ class BwRegulatorModule(outer: BwRegulator, params: BRUParams) extends LazyModul
     bc_alloc_ctl_op.asUInt.pad(5))
 
   def handleBcAllocCtl(op: UInt, at: UInt, rcid: UInt): Unit = {
-    val opEnum = op.asTypeOf(BcAllocCtlOp())
-    val opValid = ( opEnum === BcAllocCtlOp.CONFIG_LIMIT ) || ( opEnum === BcAllocCtlOp.READ_LIMIT )
-    val rcidValid = rcid >= nRCID.U
+    val opEnum = op.asTypeOf(BcCtlOp())
+    val opValid = ( opEnum === BcCtlOp.CONFIG ) || ( opEnum === BcCtlOp.READ )
+    val rcidValid = rcid < nRCID.U
 
     bc_alloc_ctl_op := opEnum
-    bc_alloc_ctl_at := at
+    bc_alloc_ctl_at := at // do nothing with AT for now
     bc_alloc_ctl_rcid := rcid
 
     when ( opValid && rcidValid ) {
       switch ( opEnum ) {
-        is ( BcAllocCtlOp.CONFIG_LIMIT ) {
+        is ( BcCtlOp.CONFIG ) {
           maxReads(rcid) := bc_bw_alloc_rbwb
           bc_alloc_ctl_status := BcAllocCtlStatus.OK
         }
-        is ( BcAllocCtlOp.READ_LIMIT ) {
+        is ( BcCtlOp.READ ) {
           bc_bw_alloc_rbwb := maxReads(rcid)
           bc_alloc_ctl_status := BcAllocCtlStatus.OK
         }
@@ -204,7 +261,6 @@ class BwRegulatorModule(outer: BwRegulator, params: BRUParams) extends LazyModul
     }.otherwise {
       bc_alloc_ctl_status := BcAllocCtlStatus.INVALID_OP
     }
-
   }
 
   def writeBcAllocCtl(valid: Bool, data: UInt): Bool = {
@@ -249,16 +305,27 @@ class BwRegulatorModule(outer: BwRegulator, params: BRUParams) extends LazyModul
     (true.B, bc_bw_alloc_u64(31,0))
   }
 
-  val perfEnable = RegInit(false.B)
-  // It is not required to reset these counters but we keep it for now as it helps to close timing
-  //  more easily in PnR
-  val aCounters = if ( withMonitor ) Some(Seq.fill(nMCID)(RegInit(VecInit(Seq.fill(nBanks)(0.U(64.W)))))) else None
-  val cCounters = if ( withMonitor ) Some(Seq.fill(nMCID)(RegInit(VecInit(Seq.fill(nBanks)(0.U(64.W)))))) else None
-
   val periodCntrReset = periodCntr >= periodLen
   periodCntr := Mux(periodCntrReset || !enBRUGlobal, 0.U, periodCntr + 1.U)
 
-  // generator loop for domains
+  // generator loop for mcid
+  for ( i <- 0 until nMCID ) {
+    val clientAcquireActMask = (coreAcquireMCID zip coreAcquireActive).map { case (mcid, act) => mcid === i.U && act }
+    val shoudIncAcquire = clientAcquireActMask.reduce(_||_)
+
+    when ( mcidStates(i) === s_mcid_count ) {
+      mcidCounters(i) := shoudIncAcquire + mcidCounters(i)
+      mcidStates(i) := s_mcid_count
+    } .elsewhen ( mcidStates(i) === s_mcid_hold ) {
+      mcidCounters(i) := mcidCounters(i)
+      mcidStates(i) := s_mcid_hold
+    } .elsewhen ( mcidStates(i) === s_mcid_reset ) {
+      mcidCounters(i) := 0.U
+      mcidStates(i) := s_mcid_count
+    }
+  }
+
+  // generator loop for rcid
   for ( i <- 0 until nRCID ) {
     for ( j <- 0 until nBanks ) {
       // bit vectors for clients that are enabled & access mem in the current cycle & are assigned to domain i & are in accssessing bank j
@@ -288,6 +355,7 @@ class BwRegulatorModule(outer: BwRegulator, params: BRUParams) extends LazyModul
 
     coreAcquireActive(i) := in.a.fire && aIsRead
     coreAcquireRCID(i) := in.a.bits.rcid
+    coreAcquireMCID(i) := in.a.bits.mcid
 
     //per bank support
     //do we access bank j
@@ -295,19 +363,6 @@ class BwRegulatorModule(outer: BwRegulator, params: BRUParams) extends LazyModul
     bankBits := in.a.bits.address(6+numBankBits-1, 6) // Can we make 6 (cache line boundary) not a magic number?
     for ( j <- 0 until nBanks ) {
       doesAccessBank(i)(j) := bankBits === j.U
-
-      aCounters match {
-        case None => // nothing
-        case Some(aCounts) => aCounts(i)(j) := Mux(perfEnable, 
-                        ((out.a.fire) && (aIsRead) && doesAccessBank(i)(j)) + aCounts(i)(j), 0.U)
-      }
-      
-      cCounters match {
-        case None => // nothing
-        case Some(cCounts) => cCounts(i)(j) := Mux(perfEnable,
-                        ((edge_out.done(out.c) && cIsWb) && doesAccessBank(i)(j)) + cCounts(i)(j), 0.U)
-      }
-
     }
 
     out <> in
@@ -384,7 +439,7 @@ class BwRegulatorModule(outer: BwRegulator, params: BRUParams) extends LazyModul
   )
 
   println("Bandwidth regulation (BRU):")
-  for (i <- clientNames.indices)
+  for ( i <- clientNames.indices )
     println(s"  $i => ${clientNames(i)}")
 }
 
@@ -409,6 +464,8 @@ class WithBRU(address: BigInt = 0x20000000L, nRCID: Int = 64, nMCID: Int = 64, w
              ver: Int = 1, nbwblks: Int = 65536, rpfx: Boolean = false, p: Int = 0, mrbwb: Int = 52428) 
 extends Config((_, _, _) => {
   case BRUKey => {
+    assert(nRCID <= 64) // interconnect limits for now
+    assert(nMCID <= 64)
     Some(BRUParams(
       address = address, 
       nRCID = nRCID,
