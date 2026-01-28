@@ -32,7 +32,7 @@ object BcMonCtlEvent extends ChiselEnum {
   val READ_ONLY        = Value(2.U)
   val WRITE_ONLY       = Value(3.U)
 
-  val CUSTOM           = Value(256.U)
+  val CUSTOM           = Value(255.U)
 }
 
 object BcCtlOp extends ChiselEnum {
@@ -80,7 +80,7 @@ class BwRegulator(params: BRUParams) (implicit p: Parameters) extends LazyModule
   val adapterNode = TLAdapterNode()
   // NOTE: we currently assume that nDomains == number of cores
   // if you decide to stray from this, change params.nDomains below to be equal to number of cores
-  val ioNode = Seq.fill(4)(BundleBridgeSource(() => new BRUTileIO(p(SubsystemBankedCoherenceKey).nBanks)))
+  val ioNode = Seq.fill(1)(BundleBridgeSource(() => new BRUTileIO(p(SubsystemBankedCoherenceKey).nBanks)))
   // val coreAccessNode = Seq.fill(4)(BundleBridgeSink[BRUTileAccessIO](Some(() => Flipped(new BRUTileAccessIO(p(SubsystemBankedCoherenceKey).nBanks)))))
   lazy val module = new BwRegulatorModule(this, params)
 }
@@ -461,7 +461,7 @@ trait CanHaveBRU { this: BaseSubsystem =>
 }
 
 class WithBRU(address: BigInt = 0x20000000L, nRCID: Int = 64, nMCID: Int = 64, withMonitor: Boolean = false,
-             ver: Int = 1, nbwblks: Int = 65536, rpfx: Boolean = false, p: Int = 0, mrbwb: Int = 52428) 
+             ver: Int = 1, nbwblks: Int = 65535, rpfx: Boolean = false, p: Int = 0, mrbwb: Int = 52428)
 extends Config((_, _, _) => {
   case BRUKey => {
     assert(nRCID <= 64) // interconnect limits for now
