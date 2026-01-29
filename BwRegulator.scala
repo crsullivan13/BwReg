@@ -93,6 +93,8 @@ class BwRegulatorModule(outer: BwRegulator, params: BRUParams) extends LazyModul
 
   val nRCID = params.nRCID
   val nMCID = params.nMCID
+  val nbwblks = params.nbwblks
+  val mrbwb = params.mrbwb
 
   val withMonitor = params.withMonitor
 
@@ -104,15 +106,14 @@ class BwRegulatorModule(outer: BwRegulator, params: BRUParams) extends LazyModul
 
   val memBase = p(ExtMem).get.master.base.U
   val wPeriod = 25 // for max 33.5ms period, F = 1GHz
-  val w = wPeriod - 3 // it can count up to a transaction per 8 cycles when window size is set to max
   var clientNames = new Array[String](n)
 
   val enBRUGlobal = RegInit(false.B)
   val countInstFetch = RegInit(true.B)
   val periodCntr = Reg(UInt(wPeriod.W))
   val periodLen = Reg(UInt(wPeriod.W))
-  val bankReadCntrs = Seq.fill(nRCID)(RegInit(VecInit(Seq.fill(nBanks)(0.U(w.W)))))
-  val maxReads = Reg(Vec(nRCID, UInt(w.W)))
+  val bankReadCntrs = Seq.fill(nRCID)(RegInit(VecInit(Seq.fill(nBanks)(0.U(log2Ceil(nbwblks).W)))))
+  val maxReads = Reg(Vec(nRCID, UInt(log2Ceil(nbwblks).W)))
   val coreAcquireActive = Wire(Vec(n, Bool()))
   val coreAcquireRCID = Wire(Vec(n, UInt(log2Ceil(nRCID).W)))
   val coreAcquireMCID = Wire(Vec(n, UInt(log2Ceil(nMCID).W)))
@@ -126,10 +127,10 @@ class BwRegulatorModule(outer: BwRegulator, params: BRUParams) extends LazyModul
 
   val bc_capabilities = WireDefault(0.U.asTypeOf(new CapabilitiesBundle))
   bc_capabilities.ver := params.ver.U
-  bc_capabilities.nbwblks := params.nbwblks.U
+  bc_capabilities.nbwblks := nbwblks.U
   bc_capabilities.rpfx := params.rpfx.B
   bc_capabilities.p := params.p.U
-  bc_capabilities.mrbwb := params.mrbwb.U
+  bc_capabilities.mrbwb := mrbwb.U
 
   // pack the fields explicitly for regmap
   val bc_capabilities_u64 = Cat(bc_capabilities.reserved_2,
@@ -248,8 +249,13 @@ class BwRegulatorModule(outer: BwRegulator, params: BRUParams) extends LazyModul
     when ( opValid && rcidValid ) {
       switch ( opEnum ) {
         is ( BcCtlOp.CONFIG ) {
-          maxReads(rcid) := bc_bw_alloc_rbwb
-          bc_alloc_ctl_status := BcAllocCtlStatus.OK
+          val rbwbValid = bc_bw_alloc_rbwb > 0.U && bc_bw_alloc_rbwb <= mrbwb.U
+          when ( rbwbValid ) {
+            maxReads(rcid) := bc_bw_alloc_rbwb
+            bc_alloc_ctl_status := BcAllocCtlStatus.OK
+          } .otherwise {
+            bc_alloc_ctl_status := BcAllocCtlStatus.INVALID_BWB
+          }
         }
         is ( BcCtlOp.READ ) {
           bc_bw_alloc_rbwb := maxReads(rcid)
