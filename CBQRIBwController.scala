@@ -9,6 +9,19 @@ import freechips.rocketchip.diplomacy._
 import freechips.rocketchip.regmapper._
 import freechips.rocketchip.tilelink._
 
+case class BwControllerParams (
+  address: BigInt,
+  nRCID: Int,
+  nMCID: Int,
+
+  // bc_capabilities
+  ver: Int,
+  nbwblks: Int,
+  rpfx: Boolean,
+  p: Int,
+  mrbwb: Int
+)
+
 class CapabilitiesBundle() extends Bundle {
   val ver = UInt(8.W) // [7:0]
   val nbwblks = UInt(16.W) // [23:8]

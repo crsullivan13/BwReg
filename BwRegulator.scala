@@ -10,22 +10,9 @@ import org.chipsalliance.cde.config.{Parameters, Field, Config}
 
 import freechips.rocketchip.tile.{BRUTileIO, BRUTileAccessIO}
 
-case class BRUParams (
-  address: BigInt,
-  nRCID: Int,
-  nMCID: Int,
+case object BRUKey extends Field[Option[BwControllerParams]](None)
 
-  // bc_capabilities
-  ver: Int,
-  nbwblks: Int,
-  rpfx: Boolean,
-  p: Int,
-  mrbwb: Int
-)
-
-case object BRUKey extends Field[Option[BRUParams]](None)
-
-class BwRegulator(params: BRUParams) (implicit p: Parameters) extends LazyModule
+class BwRegulator(params: BwControllerParams) (implicit p: Parameters) extends LazyModule
 {
   val device = new SimpleDevice("bru",Seq("bru"))
 
@@ -39,7 +26,7 @@ class BwRegulator(params: BRUParams) (implicit p: Parameters) extends LazyModule
   lazy val module = new BwRegulatorModule(this, params)
 }
 
-class BwRegulatorModule(outer: BwRegulator, params: BRUParams) extends LazyModuleImp(outer)
+class BwRegulatorModule(outer: BwRegulator, params: BwControllerParams) extends LazyModuleImp(outer)
 {
   // A TLAdapterNode has equal number of input and output edges
   val n = outer.adapterNode.in.length
@@ -164,10 +151,8 @@ class BwRegulatorModule(outer: BwRegulator, params: BRUParams) extends LazyModul
 
     when ( mcidStates(i) === s_mcid_count ) {
       mcidCounters(i) := shoudIncAcquire + mcidCounters(i)
-      mcidStates(i) := s_mcid_count
     } .elsewhen ( mcidStates(i) === s_mcid_hold ) {
       mcidCounters(i) := mcidCounters(i)
-      mcidStates(i) := s_mcid_hold
     } .elsewhen ( mcidStates(i) === s_mcid_reset ) {
       mcidCounters(i) := 0.U
       mcidStates(i) := s_mcid_count
@@ -272,7 +257,7 @@ extends Config((_, _, _) => {
   case BRUKey => {
     assert(nRCID <= 64) // interconnect limits for now
     assert(nMCID <= 64)
-    Some(BRUParams(
+    Some(BwControllerParams(
       address = address, 
       nRCID = nRCID,
       nMCID = nMCID, 
