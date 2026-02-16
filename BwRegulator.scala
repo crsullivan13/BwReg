@@ -14,7 +14,20 @@ case object BRUKey extends Field[Option[BwControllerParams]](None)
 
 class BwRegulator(params: BwControllerParams) (implicit p: Parameters) extends LazyModule
 {
-  val device = new SimpleDevice("bru",Seq("bru"))
+  var resourcesOpt: Option[ResourceBindings] = None
+  val regulationDevice = new SimpleDevice("llc-memory-reg",Seq("rsicv,cbqri-bandwidth-cache", "rsicv,cbqri-bandwidth")) {
+    def ofInt(x: Int) = Seq(ResourceInt(BigInt(x)))
+
+    override def describe(resources: ResourceBindings): Description = {
+      resourcesOpt = Some(resources)
+
+      val Description(name, mapping) = super.describe(resources)
+      val extra = Map(
+        "riscv,cbqri-rcid" -> ofInt(params.nRCID),
+        "riscv,cbqri-mcid" -> ofInt(params.nMCID))
+      Description(name, mapping ++ extra)
+    }
+  }
 
   val adapterNode = TLAdapterNode()
   // NOTE: we currently assume that nDomains == number of cores
@@ -22,7 +35,7 @@ class BwRegulator(params: BwControllerParams) (implicit p: Parameters) extends L
   val ioNode = Seq.fill(1)(BundleBridgeSource(() => new BRUTileIO(p(SubsystemBankedCoherenceKey).nBanks)))
   // val coreAccessNode = Seq.fill(4)(BundleBridgeSink[BRUTileAccessIO](Some(() => Flipped(new BRUTileAccessIO(p(SubsystemBankedCoherenceKey).nBanks)))))
 
-  val mmio = LazyModule(new CBQRIBwController(device, params))
+  val mmio = LazyModule(new CBQRIBwController(regulationDevice, params))
   lazy val module = new BwRegulatorModule(this, params)
 }
 
@@ -199,7 +212,7 @@ class BwRegulatorModule(outer: BwRegulator, params: BwControllerParams) extends 
       doesAccessBank(i)(j) := bankBits === j.U
     }
 
-    when ( coreAcquireActive(i) && aIsInstFetch ) {
+    when ( coreAcquireActive(i) ) {
       printf("RCID %d | MCID %d\n", coreAcquireRCID(i), coreAcquireMCID(i))
     }
 

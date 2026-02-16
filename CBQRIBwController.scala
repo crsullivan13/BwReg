@@ -90,7 +90,7 @@ class BcAllocCommand(nRCID: Int) extends Bundle {
     val rbwb = UInt(16.W)
 }
 
-class CBQRIBwController(device: SimpleDevice, params: BRUParams)(implicit p: Parameters) extends LazyModule()(p) {
+class CBQRIBwController(device: SimpleDevice, params: BwControllerParams)(implicit p: Parameters) extends LazyModule()(p) {
     val regnode = new TLRegisterNode(
         address = Seq(AddressSet(params.address, 0x7ff)),
         device = device,
