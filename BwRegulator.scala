@@ -264,7 +264,7 @@ trait CanHaveBRU { this: BaseSubsystem =>
     }
 }
 
-class WithBRU(address: BigInt = 0x20000000L, nRCID: Int = 64, nMCID: Int = 64,
+class WithBRU(address: BigInt = 0x20000000L, nRCID: Int = 16, nMCID: Int = 16,
              ver: Int = 1, nbwblks: Int = 65535, rpfx: Boolean = false, p: Int = 0, mrbwb: Int = 52428)
 extends Config((_, _, _) => {
   case BRUKey => {
