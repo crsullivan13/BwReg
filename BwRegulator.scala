@@ -13,15 +13,23 @@ import freechips.rocketchip.tile.{BRUTileIO, BRUTileAccessIO}
 
 // BRUTileIO defined in BaseTile.scala so we have it everywhere
 
-class BwRegulator()(implicit p: Parameters) extends LazyModule
+case class BRUParams (
+  address: BigInt,
+  nDomains: Int,
+  withMonitor: Boolean
+)
+
+case object BRUKey extends Field[Option[BRUParams]](None)
+
+class BwRegulator(params: BRUParams)(implicit p: Parameters) extends LazyModule
 {
     val device = new SimpleDevice("bru",Seq("bru"))
 
-    // first number is number of cores, second is number of banks..
+    // first number is number of cores, second is number of banks
     // TODO: Can we grab the number of cores from params somehow?
     val ioNode = Seq.fill(4)(BundleBridgeSource(() => new BRUTileIO(p(SubsystemBankedCoherenceKey).nBanks)))
     val dramRegNode = BundleBridgeSink[BRUTileIO](Some(() => Flipped(new BRUTileIO(4))))
-    val coreAccessNode = Seq.fill(4)(BundleBridgeSink[BRUTileAccessIO](Some(() => Flipped(new BRUTileAccessIO(p(SubsystemBankedCoherenceKey).nBanks)))))
+    // val coreAccessNode = Seq.fill(params.nDomains)(BundleBridgeSink[BRUTileAccessIO](Some(() => Flipped(new BRUTileAccessIO(p(SubsystemBankedCoherenceKey).nBanks)))))
     val adapterNode = TLAdapterNode()
 
     // add simple config registers
@@ -30,18 +38,15 @@ class BwRegulator()(implicit p: Parameters) extends LazyModule
         device = device,
         beatBytes = 8)
 
-    lazy val module = new BwRegulatorModule(this)
+    lazy val module = new BwRegulatorModule(this, params)
 }
 
-class BwRegulatorModule(outer: BwRegulator) extends LazyModuleImp(outer)
+class BwRegulatorModule(outer: BwRegulator, params: BRUParams) extends LazyModuleImp(outer)
 {
   val throttleIO = outer.ioNode.map(_.bundle)
 
-  val nDomains = 4
-  val numDramBanks = 8
-  val numCacheBanks = 2
-  val dramBankBitOffset = 16
-  val dramBankMask = numDramBanks - 1
+  val nDomains = params.nDomains
+  val numCacheBanks = p(SubsystemBankedCoherenceKey).nBanks
 
   val memBase = p(ExtMem).get.master.base.U
 
@@ -121,3 +126,7 @@ trait CanHaveBRU { this: BaseSubsystem =>
         }
     }
 }
+
+class WithBRU(address: BigInt = 0x20000000L, nDomains: Int = 4, withMonitor: Boolean = false) extends Config((_, _, _) => {
+  case BRUKey => Some(BRUParams(address = address, nDomains = nDomains, withMonitor = withMonitor))
+})
