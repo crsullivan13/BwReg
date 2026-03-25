@@ -16,9 +16,9 @@ import freechips.rocketchip.tile.{BRUTileIO, BRUTileAccessIO, BRUPerBankTileIO}
 case class BRUParams (
   address: BigInt,
   nDomains: Int,
-  withMonitor: Boolean, // does nothing on this branch
   nDramBanks: Int,
-  dramBankOffset: Int
+  dramBankOffset: Int,
+  nCores: Int
 )
 
 case object BRUKey extends Field[Option[BRUParams]](None)
@@ -29,8 +29,7 @@ class BwRegulator(params: BRUParams)(implicit p: Parameters) extends LazyModule
 
     // first number is number of cores, second is number of banks
     // TODO: Can we grab the number of cores from params somehow?
-    // for now assume number of cores == nDomains
-    val ioNode = Seq.fill(params.nDomains)(BundleBridgeSource(() => new BRUTileIO(p(SubsystemBankedCoherenceKey).nBanks)))
+    val ioNode = Seq.fill(params.nCores)(BundleBridgeSource(() => new BRUTileIO(p(SubsystemBankedCoherenceKey).nBanks)))
     val dramRegNode = BundleBridgeSink[BRUPerBankTileIO](Some(() => Flipped(new BRUPerBankTileIO(params.nDomains, params.nDramBanks))))
     // val coreAccessNode = Seq.fill(4)(BundleBridgeSink[BRUTileAccessIO](Some(() => Flipped(new BRUTileAccessIO(p(SubsystemBankedCoherenceKey).nBanks)))))
     val adapterNode = TLAdapterNode()
@@ -143,6 +142,6 @@ trait CanHaveBRU { this: BaseSubsystem =>
     }
 }
 
-class WithBRU(address: BigInt = 0x20000000L, nDomains: Int = 4, withMonitor: Boolean = false, nDramBanks: Int = 8, dramBankOffset: Int = 16) extends Config((_, _, _) => {
-  case BRUKey => Some(BRUParams(address = address, nDomains = nDomains, withMonitor = withMonitor, nDramBanks = nDramBanks, dramBankOffset = dramBankOffset))
+class WithBRU(address: BigInt = 0x20000000L, nDomains: Int = 4, nDramBanks: Int = 8, dramBankOffset: Int = 16, nCores: Int = 4) extends Config((_, _, _) => {
+  case BRUKey => Some(BRUParams(address = address, nDomains = nDomains, nDramBanks = nDramBanks, dramBankOffset = dramBankOffset, nCores = nCores))
 })
