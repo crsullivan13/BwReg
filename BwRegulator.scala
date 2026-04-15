@@ -28,7 +28,7 @@ class BwRegulator(params: BRUParams)(implicit p: Parameters) extends LazyModule
 
     // first number is number of cores, second is number of banks
     // TODO: Can we grab the number of cores from params somehow?
-    val ioNode = Seq.fill(params.nCores)(BundleBridgeSource(() => new BRUTileIO(p(SubsystemBankedCoherenceKey).nBanks)))
+    // val ioNode = Seq.fill(params.nCores)(BundleBridgeSource(() => new BRUTileIO(p(SubsystemBankedCoherenceKey).nBanks)))
     val dramRegNode = BundleBridgeSink[BRUTileIO](Some(() => Flipped(new BRUTileIO(params.nDomains))))
     // val coreAccessNode = Seq.fill(params.nDomains)(BundleBridgeSink[BRUTileAccessIO](Some(() => Flipped(new BRUTileAccessIO(p(SubsystemBankedCoherenceKey).nBanks)))))
     val adapterNode = TLAdapterNode()
@@ -44,7 +44,7 @@ class BwRegulator(params: BRUParams)(implicit p: Parameters) extends LazyModule
 
 class BwRegulatorModule(outer: BwRegulator, params: BRUParams) extends LazyModuleImp(outer)
 {
-  val throttleIO = outer.ioNode.map(_.bundle)
+  // val throttleIO = outer.ioNode.map(_.bundle)
 
   val nDomains = params.nDomains
   val numCacheBanks = p(SubsystemBankedCoherenceKey).nBanks
@@ -84,9 +84,9 @@ class BwRegulatorModule(outer: BwRegulator, params: BRUParams) extends LazyModul
       out.a.bits.domainId := clientDomainIds(i)
       out.c.bits.domainId := clientDomainIds(i)
 
-      for ( j <- 0 until numCacheBanks ) {
-        throttleIO(i).nThrottle(j) := false.B
-      }
+      // for ( j <- 0 until numCacheBanks ) {
+      //   throttleIO(i).nThrottle(j) := false.B
+      // }
 
       when ( clientRegEnable(i) && globalEnable ) {
         when ( isAccessRead && outer.dramRegNode.bundle.nThrottle(clientDomainIds(i)) ) {
